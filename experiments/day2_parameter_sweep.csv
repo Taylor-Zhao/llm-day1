@@ -1,0 +1,13 @@
+run_id,model,temperature,max_tokens,latency_seconds,input_tokens,output_tokens,total_tokens,output_chars,output_lines,system_prompt_file
+1,qwen2.5:0.5b,0.1,150,65.9935,266,150,416,265,13,prompts/system_prompt_v2_backend_cn.txt
+2,qwen2.5:0.5b,0.1,300,11.4851,266,300,566,514,43,prompts/system_prompt_v2_backend_cn.txt
+3,qwen2.5:0.5b,0.1,450,13.9792,266,450,716,823,32,prompts/system_prompt_v2_backend_cn.txt
+4,qwen2.5:0.5b,0.3,150,4.955,266,150,416,243,13,prompts/system_prompt_v2_backend_cn.txt
+5,qwen2.5:0.5b,0.3,300,9.3573,266,300,566,461,23,prompts/system_prompt_v2_backend_cn.txt
+6,qwen2.5:0.5b,0.3,450,13.2306,266,450,716,739,42,prompts/system_prompt_v2_backend_cn.txt
+7,qwen2.5:0.5b,0.7,150,4.8149,266,150,416,249,6,prompts/system_prompt_v2_backend_cn.txt
+8,qwen2.5:0.5b,0.7,300,8.9402,266,300,566,678,25,prompts/system_prompt_v2_backend_cn.txt
+9,qwen2.5:0.5b,0.7,450,6.6397,266,182,448,306,16,prompts/system_prompt_v2_backend_cn.txt
+10,qwen2.5:0.5b,1.0,150,5.3507,266,150,416,288,12,prompts/system_prompt_v2_backend_cn.txt
+11,qwen2.5:0.5b,1.0,300,9.4722,266,300,566,593,22,prompts/system_prompt_v2_backend_cn.txt
+12,qwen2.5:0.5b,1.0,450,12.4085,266,450,716,915,46,prompts/system_prompt_v2_backend_cn.txt

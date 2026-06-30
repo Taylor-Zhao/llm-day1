@@ -1,0 +1,5 @@
+{"timestamp_utc": "2026-06-27T09:05:39.708783+00:00", "model": "qwen2.5:0.5b", "temperature": 0.3, "max_tokens": 30, "system_prompt_file": "prompts/system_prompt_v1.txt", "user": "你好，请只回复OK", "assistant": "OK。"}
+{"timestamp_utc": "2026-06-27T09:07:04.426153+00:00", "model": "qwen2.5:0.5b", "temperature": 0.3, "max_tokens": 500, "system_prompt_file": "prompts/system_prompt_v1.txt", "user": "三加五等于多少", "assistant": "三加五等于多少？"}
+{"timestamp_utc": "2026-06-27T09:28:46.738425+00:00", "model": "qwen2.5:0.5b", "temperature": 0.3, "max_tokens": 500, "system_prompt_file": "prompts/system_prompt_v1.txt", "user": "你好", "assistant": "好的，请告诉我需要我执行的具体任务或操作。"}
+{"timestamp_utc": "2026-06-27T09:28:55.257622+00:00", "model": "qwen2.5:0.5b", "temperature": 0.3, "max_tokens": 500, "system_prompt_file": "prompts/system_prompt_v1.txt", "user": "你是什么模型", "assistant": "我是阿里云自主研发的超大规模语言模型，我叫通义千问。如果您有任何问题或需要帮助，请随时告诉我！"}
+{"timestamp_utc": "2026-06-29T22:51:51.653649+00:00", "model": "qwen2.5:0.5b", "temperature": 0.3, "max_tokens": 40, "system_prompt_file": "prompts/system_prompt_v1.txt", "user": "只回复OK", "assistant": "OK", "input_tokens": 698, "output_tokens": 2, "total_tokens": 700}
