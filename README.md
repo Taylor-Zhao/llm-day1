@@ -192,3 +192,38 @@ Typical pattern:
 - increasing `temperature` changes style and stability
 - increasing `max_tokens` changes length and latency
 - the best setting is usually not the longest answer, but the most stable answer that is still complete enough
+
+## 10) Day 3 - Backend Assistant (Log + Code)
+
+Day 3 goal: build one practical backend assistant with 2 modes.
+
+### Mode A: Log Analysis
+
+```bash
+python run_day3_backend_assistant.py \
+	--mode log-analysis \
+	--input-file inputs/day3_sample.log
+```
+
+### Mode B: Code Explain
+
+```bash
+python run_day3_backend_assistant.py \
+	--mode code-explain \
+	--input-file inputs/day3_sample_code.go
+```
+
+Optional parameters:
+
+```bash
+python run_day3_backend_assistant.py \
+	--mode log-analysis \
+	--input-file inputs/day3_sample.log \
+	--question "优先给最小修复方案" \
+	--temperature 0.2 \
+	--max-tokens 700
+```
+
+Generated files:
+- `experiments/day3_backend_assistant.md` (readable report)
+- `logs/day3_backend_assistant.jsonl` (raw records)

@@ -1,0 +1,6 @@
+2026-06-30T09:10:21Z INFO  request_id=abc123 method=GET path=/api/orders/42 status=500 latency_ms=128
+2026-06-30T09:10:21Z ERROR request_id=abc123 msg="db query failed" error="pq: canceling statement due to statement timeout"
+2026-06-30T09:10:21Z WARN  request_id=abc123 db_pool_in_use=30 db_pool_max=30
+2026-06-30T09:10:22Z INFO  request_id=abc124 method=GET path=/api/orders/43 status=500 latency_ms=131
+2026-06-30T09:10:22Z ERROR request_id=abc124 msg="db query failed" error="pq: canceling statement due to statement timeout"
+2026-06-30T09:10:22Z WARN  request_id=abc124 upstream=postgres cpu=92% io_wait=24%
