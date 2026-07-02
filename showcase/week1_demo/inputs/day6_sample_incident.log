@@ -1,0 +1,6 @@
+[2026-06-30T10:01:10Z] gateway ERROR request timeout path=/api/order/create trace=ab12
+[2026-06-30T10:01:10Z] order-service WARN db query slow sql=insert_order cost_ms=1820
+[2026-06-30T10:01:11Z] order-service ERROR context deadline exceeded trace=ab12
+[2026-06-30T10:01:11Z] order-service INFO goroutines=2480 cpu=82% mem=76%
+[2026-06-30T10:01:12Z] db-proxy WARN pool exhausted max_open=200 in_use=200 wait_count=1540
+[2026-06-30T10:01:14Z] gateway ERROR 5xx_rate=12.8% p99=2400ms

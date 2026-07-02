@@ -1,0 +1,20 @@
+[
+  {
+    "name": "go_timeout_under_load",
+    "task": "分析 Go 服务高并发下超时问题，给最小修复方案",
+    "input": "现象：压测 10 分钟后，99 线延迟从 120ms 升到 2.8s。\n日志：context deadline exceeded；db query timeout；goroutine 数从 300 飙到 3500。\n代码片段：HTTP handler 里每次请求都新建 DB client，没有连接池参数。",
+    "must_have_keywords": ["连接池", "goroutine", "超时", "99 线"]
+  },
+  {
+    "name": "java_npe_after_release",
+    "task": "分析 Java 发布后空指针异常并给回滚策略",
+    "input": "现象：发布后 5 分钟开始出现 NPE，接口 500 比例 18%。\n日志：NullPointerException at OrderService.buildResponse(OrderService.java:87)。\n变更：本次发布将 userProfile 改为可选字段，未补全兼容判空逻辑。",
+    "must_have_keywords": ["判空", "兼容", "回滚", "500"]
+  },
+  {
+    "name": "php_redis_connection_spike",
+    "task": "分析 PHP 服务 Redis 连接暴涨并给稳态方案",
+    "input": "现象：QPS 无明显上升，但 Redis 连接数从 2k 涨到 18k。\n日志：redis connect timeout, too many clients。\n代码：每次请求重复 new Redis() 并 connect，未复用长连接。",
+    "must_have_keywords": ["连接复用", "Redis", "超时", "too many clients"]
+  }
+]

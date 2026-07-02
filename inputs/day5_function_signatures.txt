@@ -1,0 +1,20 @@
+# Go
+func CreateOrder(ctx context.Context, req CreateOrderRequest) (*CreateOrderResponse, error)
+// Route: POST /api/v1/orders
+
+func GetOrder(ctx context.Context, orderID string) (*OrderDetail, error)
+// Route: GET /api/v1/orders/{orderId}
+
+# Java (Spring)
+public ResponseEntity<UserProfileDTO> getUserProfile(@PathVariable("userId") Long userId)
+// Route: GET /api/v1/users/{userId}
+
+public ResponseEntity<Void> updateUserStatus(@PathVariable Long userId, @RequestBody UpdateStatusRequest req)
+// Route: PATCH /api/v1/users/{userId}/status
+
+# PHP
+public function login(Request $request): JsonResponse
+// Route: POST /api/v1/auth/login
+
+public function refreshToken(Request $request): JsonResponse
+// Route: POST /api/v1/auth/refresh

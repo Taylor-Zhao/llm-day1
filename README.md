@@ -227,3 +227,121 @@ python run_day3_backend_assistant.py \
 Generated files:
 - `experiments/day3_backend_assistant.md` (readable report)
 - `logs/day3_backend_assistant.jsonl` (raw records)
+
+## 11) Day 4 - Regression Eval (Prompt + Quality Gate)
+
+Day 4 goal: build a lightweight regression benchmark for backend Q&A quality.
+
+Run Day 4 script:
+
+```bash
+python run_day4_regression_eval.py
+```
+
+Optional parameters:
+
+```bash
+python run_day4_regression_eval.py \
+	--cases-file inputs/day4_eval_cases.json \
+	--temperature 0.2 \
+	--max-tokens 700
+```
+
+Generated files:
+- `experiments/day4_regression_eval.md` (readable report)
+- `experiments/day4_regression_eval.csv` (summary table)
+- `logs/day4_regression_eval.jsonl` (raw records)
+
+What to observe:
+1. Section compliance: whether output follows required backend incident template.
+2. Keyword coverage: whether key technical evidence appears in the answer.
+3. Stability over reruns: whether pass rate changes when prompt/model changes.
+
+Advanced options:
+
+```bash
+# 失败用例自动重试 2 次（会在报告里保留 attempt 对比）
+python run_day4_regression_eval.py --retry-failed 2
+
+# 多模型对比（同一套 case 同时评测）
+python run_day4_regression_eval.py --models qwen2.5:0.5b,qwen2.5:3b
+
+# 质量门禁：通过率低于 80% 时脚本返回非 0（适合 CI）
+python run_day4_regression_eval.py --min-pass-rate 0.8
+```
+
+## 12) Day 5 - 接口文档生成器（根据函数签名产出 API 文档草稿）
+
+Day 5 goal: generate API documentation draft from function signatures and route definitions.
+
+Run Day 5 script:
+
+```bash
+python run_day5_api_doc_generator.py
+```
+
+Optional parameters:
+
+```bash
+python run_day5_api_doc_generator.py \
+	--input-file inputs/day5_function_signatures.txt \
+	--temperature 0.2 \
+	--max-tokens 900
+```
+
+Generated files:
+- `experiments/day5_api_doc_draft.md` (generated API doc draft)
+- `logs/day5_api_doc_generator.jsonl` (run metadata)
+
+What to observe:
+1. Whether each API includes method/path/params/response/error codes.
+2. Whether uncertain fields are listed under "待确认信息" instead of being guessed.
+
+## 13) Day 6 - 输出控制（固定 JSON + 校验失败重试）
+
+Day 6 goal: force the model to return strict JSON, validate schema, and retry on validation failure.
+
+Run Day 6 script:
+
+```bash
+python run_day6_json_output_control.py
+```
+
+Optional parameters:
+
+```bash
+python run_day6_json_output_control.py \
+	--input-file inputs/day6_sample_incident.log \
+	--max-attempts 3 \
+	--temperature 0.0 \
+	--max-tokens 800
+```
+
+Generated files:
+- `experiments/day6_structured_output.json` (final validated JSON)
+- `experiments/day6_json_output_control.md` (attempt report)
+- `logs/day6_json_output_control.jsonl` (raw per-attempt logs)
+
+What to observe:
+1. Whether the output is strict JSON (no extra markdown/text).
+2. Whether schema validation passes at attempt 1.
+3. If retry was triggered, whether the second/third attempt fixed validation errors.
+
+## 14) Day 7 - 周总结与展示包整理
+
+Day 7 goal: prepare a shareable Week 1 demo package with summary + sample inputs/outputs.
+
+Key deliverables:
+- `experiments/day7_weekly_summary.md` (weekly summary)
+- `showcase/week1_demo/README.md` (demo guide)
+- `showcase/week1_demo/inputs/*` (sample inputs)
+- `showcase/week1_demo/outputs/*` (sample outputs)
+
+Quick start:
+
+```bash
+cd /Users/zhaoyonggng/work/llm-day1
+source .venv/bin/activate
+python run_day5_api_doc_generator.py --input-file inputs/day5_function_signatures.txt
+python run_day6_json_output_control.py --input-file inputs/day6_sample_incident.log --max-attempts 3
+```
