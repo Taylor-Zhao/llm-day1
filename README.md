@@ -345,3 +345,381 @@ source .venv/bin/activate
 python run_day5_api_doc_generator.py --input-file inputs/day5_function_signatures.txt
 python run_day6_json_output_control.py --input-file inputs/day6_sample_incident.log --max-attempts 3
 ```
+
+## 15) Day 8 - Embedding 原理 + 文本切分实验
+
+Day 8 goal: understand embedding basics and run chunking parameter experiments for RAG preparation.
+
+Study note:
+- `experiments/day8_embedding_principles.md`
+
+Run Day 8 script:
+
+```bash
+python run_day8_chunking_experiment.py
+```
+
+Optional parameters:
+
+```bash
+python run_day8_chunking_experiment.py \
+	--input-file inputs/day8_corpus_backend_notes.txt \
+	--chunk-sizes 80,120,160 \
+	--overlaps 10,20,40
+```
+
+Optional embedding probe (if your endpoint supports embeddings):
+
+```bash
+python run_day8_chunking_experiment.py \
+	--enable-embedding-probe \
+	--embedding-model text-embedding-3-small
+```
+
+Auto recommendation tuning:
+
+```bash
+# 成本优先推荐时，限制冗余率上限（默认 0.30）
+python run_day8_chunking_experiment.py \
+	--enable-embedding-probe \
+	--embedding-model nomic-embed-text \
+	--max-redundancy-for-cost 0.28
+```
+
+If you use Ollama locally, prepare an embedding model first:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Then set in `.env`:
+
+```dotenv
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+OPENAI_EMBEDDING_MODEL=nomic-embed-text
+```
+
+Note: the Day8 script will auto-fallback to Ollama native `/api/embeddings` if `/v1/embeddings` returns 404.
+
+Generated files:
+- `experiments/day8_chunking_experiment.md` (readable report)
+- `experiments/day8_chunking_experiment.csv` (summary table)
+- `logs/day8_chunking_experiment.jsonl` (raw records)
+
+What to observe:
+1. Chunk count vs average chunk length.
+2. Redundancy ratio: overlap too high may duplicate too much context.
+3. Cohesion score: adjacent chunks should still keep semantic continuity.
+
+## 16) Day 9 - 搭建本地向量检索（FAISS）
+
+Day 9 goal: build a local FAISS index and run semantic retrieval on your backend notes corpus.
+
+Install dependency:
+
+```bash
+pip install faiss-cpu numpy
+```
+
+Run Day 9 script:
+
+```bash
+python run_day9_local_vector_search.py
+```
+
+Optional parameters:
+
+```bash
+python run_day9_local_vector_search.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--queries-file inputs/day9_queries.txt \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--embedding-model nomic-embed-text
+```
+
+Generated files:
+- `data/day9_faiss.index` (FAISS index)
+- `data/day9_faiss_meta.json` (index metadata/chunks)
+- `experiments/day9_vector_search.md` (retrieval report)
+- `logs/day9_vector_search.jsonl` (raw query-hit logs)
+
+What to observe:
+1. Top-k results are semantically relevant (not only keyword matching).
+2. Different chunk_size/overlap settings change retrieval ranking quality.
+3. This is the base for Day10 QA (retrieve first, then answer).
+
+## 17) Day 10 - 知识库问答 V1（仅召回，不重排）
+
+Day 10 goal: generate answers from retrieved chunks only (no reranker in V1).
+
+Run Day 10 script:
+
+```bash
+python run_day10_kb_qa_v1.py
+```
+
+Optional parameters:
+
+```bash
+python run_day10_kb_qa_v1.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--queries-file inputs/day9_queries.txt \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day10_kb_qa_v1.md` (retrieval + answer report)
+- `logs/day10_kb_qa_v1.jsonl` (raw records)
+
+What to observe:
+1. 回答是否主要基于召回片段，不出现明显幻觉。
+2. top-k 变化是否影响回答完整性。
+3. 这是 Day11“加引用来源”的基础版本。
+
+### Day10 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[启动脚本 main] --> B[加载 .env 与解析 CLI 参数]
+	B --> C{参数校验}
+	C -->|overlap >= chunk_size 或 top_k <= 0| X[抛出异常并结束]
+	C -->|通过| D[解析输入/输出路径]
+	D --> E[读取语料 corpus]
+	E --> F[chunk_text 切分文本]
+	F --> G{是否生成 chunks}
+	G -->|否| Y[抛出 no chunks generated]
+	G -->|是| H[确定 embedding_model 与 qa_model]
+	H --> I[构建 embedding client]
+	I --> J[逐 chunk 生成向量]
+	J --> K[L2 归一化]
+	K --> L[构建 FAISS IndexFlatIP 并 add 向量]
+	L --> M[加载 system prompt]
+	M --> N[构建 QA client]
+	N --> O[读取 queries]
+	O --> P[遍历每个 query]
+
+	P --> Q[retrieve_hits 向量召回 top-k]
+	Q --> R[build_user_text 拼接召回片段上下文]
+	R --> S[chat_once 生成答案]
+	S --> T[组装 row: query/hits/answer/tokens]
+	T --> U[append_jsonl 追加日志]
+	U --> V{还有下一个 query?}
+	V -->|是| P
+	V -->|否| W[write_report 输出 Markdown 报告]
+	W --> Z[打印完成信息并结束]
+
+	note1[Day10 V1 约束: 仅召回，不做 rerank] -.-> Q
+```
+
+### Day10 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	autonumber
+	participant U as 用户/命令行
+	participant S as Day10脚本
+	participant FS as 文件系统
+	participant EMB as Embedding服务
+	participant F as FAISS索引
+	participant QA as Chat模型服务
+
+	U->>S: 运行脚本(参数)
+	S->>S: load_dotenv + parse_args
+	S->>S: 参数校验(overlap, top_k)
+
+	S->>FS: 读取 corpus 文件
+	FS-->>S: 语料文本
+	S->>S: chunk_text(分词+滑窗切分)
+
+	S->>EMB: 批量请求 chunk embeddings
+	EMB-->>S: chunk 向量列表
+	S->>S: 向量矩阵 L2 归一化
+	S->>F: 创建 IndexFlatIP 并 add(matrix)
+
+	S->>FS: 读取 system prompt
+	FS-->>S: prompt 文本
+	S->>FS: 读取 queries 文件
+	FS-->>S: query 列表
+
+	loop 每个 query
+		S->>EMB: 请求 query embedding
+		EMB-->>S: query 向量
+		S->>F: search(top_k)
+		F-->>S: scores + ids (hits)
+		S->>S: build_user_text(query + hits上下文)
+		S->>QA: chat_once(system + user_text)
+		QA-->>S: answer + usage
+		S->>FS: append_jsonl(row)
+	end
+
+	S->>FS: write_report(markdown)
+	S-->>U: 打印完成信息
+```
+
+## 18) Day 11 - 知识库问答 V2（必须附引用来源）
+
+Day 11 goal: answers must include original citation snippets from retrieved chunks.
+
+Run Day 11 script:
+
+```bash
+python run_day11_kb_qa_with_citations.py
+```
+
+Optional parameters:
+
+```bash
+python run_day11_kb_qa_with_citations.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--queries-file inputs/day9_queries.txt \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--max-attempts 3 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day11_kb_qa_with_citations.md` (retrieval + answer + citation validation)
+- `logs/day11_kb_qa_with_citations.jsonl` (raw records)
+
+What to observe:
+1. 回答是否包含“回答：”与“引用来源：”两个小节。
+2. 引用是否使用 `- [chunk-<id>] <原文片段>` 格式。
+3. 引用内容是否是对应 chunk 的原文连续子串。
+4. 若首次不合规，重试是否修复输出格式。
+
+## 19) Day 12 - 优化切分策略（chunk size、overlap）
+
+Day 12 goal: grid-search chunking parameters and recommend better chunk size / overlap settings.
+
+Run Day 12 script:
+
+```bash
+python run_day12_chunking_strategy_tuning.py
+```
+
+Optional parameters:
+
+```bash
+python run_day12_chunking_strategy_tuning.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--queries-file inputs/day9_queries.txt \
+	--chunk-sizes 60,80,120,160 \
+	--overlaps 10,20,40 \
+	--top-k 3 \
+	--max-attempts 2 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day12_chunking_strategy_tuning.md` (推荐结果 + 汇总表)
+- `experiments/day12_chunking_strategy_tuning.csv` (结构化汇总)
+- `logs/day12_chunking_strategy_tuning.jsonl` (每个参数组合下每个 query 的明细)
+
+What to observe:
+1. `citation_valid_rate` 是否稳定接近 1.0。
+2. `info_insufficient_rate` 是否随 chunk 策略变化而下降。
+3. `avg_total_tokens` 与 `redundancy_ratio` 是否过高，避免成本失控。
+4. 比较“质量优先”和“成本优先”推荐是否一致。
+
+## 20) Day 13 - 加入重排（Reranker）并对比效果
+
+Day 13 goal: compare no-rerank vs rerank in the same citation-required QA pipeline.
+
+Run Day 13 script:
+
+```bash
+python run_day13_reranker_comparison.py
+```
+
+Optional parameters:
+
+```bash
+python run_day13_reranker_comparison.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--queries-file inputs/day9_queries.txt \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--rerank-alpha 0.70 \
+	--rerank-beta 0.25 \
+	--rerank-gamma 0.05 \
+	--max-attempts 2 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day13_reranker_comparison.md` (无重排 vs 重排的汇总与逐 query 对比)
+- `experiments/day13_reranker_comparison.csv` (两种模式汇总指标)
+- `logs/day13_reranker_comparison.jsonl` (逐 query 明细，含两种模式)
+
+What to observe:
+1. 重排后 `citation_valid_rate` 是否提升。
+2. 重排后 `info_insufficient_rate` 是否下降。
+3. `avg_attempt_count` 与 `avg_total_tokens` 是否可接受。
+4. 每个 query 的 top-k chunk_id 是否发生有意义变化。
+
+## 21) Day 14 - RAG V1 演示版（可回答熟悉的后端文档）
+
+Day 14 goal: complete a runnable RAG V1 demo that can answer your backend documentation.
+
+Run Day 14 script (demo questions):
+
+```bash
+python run_day14_rag_v1_demo.py --use-rerank
+```
+
+Run with your own questions:
+
+```bash
+python run_day14_rag_v1_demo.py \
+	--use-rerank \
+	--query "如何排查数据库连接池超时？" \
+	--query "缓存穿透怎么定位？"
+```
+
+Run interactive mode:
+
+```bash
+python run_day14_rag_v1_demo.py --use-rerank --repl
+```
+
+Optional parameters:
+
+```bash
+python run_day14_rag_v1_demo.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--rerank-alpha 0.70 \
+	--rerank-beta 0.25 \
+	--rerank-gamma 0.05 \
+	--max-attempts 2 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day14_rag_v1_demo.md` (演示问答报告)
+- `logs/day14_rag_v1_demo.jsonl` (逐次问答明细)
+
+What to observe:
+1. 每次回答是否都包含“引用来源”且引用可追溯。
+2. 开启重排后，top-k 片段是否更贴合问题。
+3. 对熟悉的后端问题，回答是否更稳定、可执行。
+
+Technical Mermaid diagrams:
+- `experiments/day8_day14_technical_mermaid.md` (Day8-Day14 技术细节版流程图/时序图/参数指标图)
