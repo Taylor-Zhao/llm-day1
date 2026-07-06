@@ -723,3 +723,271 @@ What to observe:
 
 Technical Mermaid diagrams:
 - `experiments/day8_day14_technical_mermaid.md` (Day8-Day14 技术细节版流程图/时序图/参数指标图)
+
+## 22) Day 15 - 设计评测集（20-30 条问答基准）
+
+Day 15 goal: build a reusable eval set for offline RAG benchmarking.
+
+Generated files:
+- `inputs/day15_evalset_qa.json` (24 条问答基准，含可回答与信息不足样本)
+- `experiments/day15_evalset_design.md` (字段定义、样本分布、Day16 对接建议)
+
+Eval set structure (per case):
+- `id`: 样本 ID
+- `question`: 测试问题
+- `answerable`: 是否可由语料回答
+- `reference_answer`: 参考答案
+- `answer_keypoints`: 关键要点
+- `expected_source_keywords`: 期望命中的语料关键词
+- `category`: 主题分类
+- `difficulty`: 难度
+
+How Day16 can directly use this:
+1. 检索命中率：对 `answerable=true` 样本，Top-K 命中任一 `expected_source_keywords` 记为命中。
+2. 引用正确率：回答引用格式合法且引用片段命中关键词，记为正确。
+3. 信息不足正确率：对 `answerable=false` 样本，模型输出“当前信息不足”且不编造细节，记为正确拒答。
+
+## 23) Day 16 - 实现离线评测脚本（命中率、引用正确率）
+
+Day 16 goal: run offline evaluation on Day15 eval set and output reproducible metrics.
+
+Run Day 16 script:
+
+```bash
+python run_day16_offline_eval.py --use-rerank
+```
+
+Optional parameters:
+
+```bash
+python run_day16_offline_eval.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--evalset-file inputs/day15_evalset_qa.json \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--use-rerank \
+	--max-attempts 2 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day16_offline_eval.md` (评测报告)
+- `experiments/day16_offline_eval_summary.csv` (结构化汇总指标)
+- `logs/day16_offline_eval.jsonl` (逐样本明细)
+
+Metrics:
+1. `retrieval_hit_rate`：可回答样本中，Top-K 是否命中期望关键词。
+2. `citation_correct_rate`：可回答样本中，引用格式合规且引用 chunk 命中期望关键词。
+3. `insufficient_correct_rate`：不可回答样本中，是否正确输出“当前信息不足”。
+
+## 24) Day 17 - 加查询改写（Query Rewrite）并对比效果
+
+Day 17 goal: compare no-rewrite vs rewrite retrieval queries on the same offline eval set.
+
+Run Day 17 script:
+
+```bash
+python run_day17_query_rewrite_comparison.py --use-rerank
+```
+
+Optional parameters:
+
+```bash
+python run_day17_query_rewrite_comparison.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--evalset-file inputs/day15_evalset_qa.json \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--use-rerank \
+	--max-attempts 1 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day17_query_rewrite_comparison.md`（无改写 vs 改写对比报告）
+- `experiments/day17_query_rewrite_comparison.csv`（结构化汇总）
+- `logs/day17_query_rewrite_comparison.jsonl`（逐样本双模式明细）
+
+Metrics:
+1. `retrieval_hit_rate`：可回答样本命中率。
+2. `citation_correct_rate`：引用正确率（格式合法 + 证据命中）。
+3. `insufficient_correct_rate`：不可回答样本正确拒答率。
+4. `rewrite_changed_rate`：改写后查询与原查询不同的比例。
+
+## 25) Day 18 - 加多路召回（关键词 + 向量）并对比效果
+
+Day 18 goal: compare vector-only retrieval vs hybrid retrieval (keyword + vector fusion).
+
+Run Day 18 script:
+
+```bash
+python run_day18_hybrid_retrieval_comparison.py --use-rerank
+```
+
+Optional parameters:
+
+```bash
+python run_day18_hybrid_retrieval_comparison.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--evalset-file inputs/day15_evalset_qa.json \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--use-rerank \
+	--hybrid-vector-weight 0.70 \
+	--hybrid-keyword-weight 0.30 \
+	--rrf-k 60 \
+	--max-attempts 1 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day18_hybrid_retrieval_comparison.md`（vector_only vs hybrid 对比报告）
+- `experiments/day18_hybrid_retrieval_comparison.csv`（结构化汇总）
+- `logs/day18_hybrid_retrieval_comparison.jsonl`（逐样本双模式明细）
+
+Metrics:
+1. `retrieval_hit_rate`：可回答样本命中率。
+2. `citation_correct_rate`：引用正确率（格式合法 + 证据命中）。
+3. `insufficient_correct_rate`：不可回答样本正确拒答率。
+4. `citation_format_valid_rate`：引用格式与可追溯合规率。
+
+## 26) Day 19 - 加缓存与去重并对比效果
+
+Day 19 goal: compare baseline hybrid retrieval vs cache+dedup optimization on the same offline eval set.
+
+Run Day 19 script:
+
+```bash
+python run_day19_cache_dedup_comparison.py --use-rerank
+```
+
+Optional parameters:
+
+```bash
+python run_day19_cache_dedup_comparison.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--evalset-file inputs/day15_evalset_qa.json \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--use-rerank \
+	--hybrid-vector-weight 0.70 \
+	--hybrid-keyword-weight 0.30 \
+	--rrf-k 60 \
+	--max-attempts 1 \
+	--eval-retries 2 \
+	--eval-retry-backoff 1.5 \
+	--qa-timeout-seconds 90 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day19_cache_dedup_comparison.md`（baseline vs cache_dedup 对比报告）
+- `experiments/day19_cache_dedup_comparison.csv`（结构化汇总）
+- `logs/day19_cache_dedup_comparison.jsonl`（逐样本双模式明细）
+
+Metrics:
+1. `retrieval_hit_rate`：可回答样本命中率。
+2. `citation_correct_rate`：引用正确率（格式合法 + 证据命中）。
+3. `insufficient_correct_rate`：不可回答样本正确拒答率。
+4. `citation_format_valid_rate`：引用格式与可追溯合规率。
+5. `cache_hit_rate`：缓存查找命中率（仅 cache_dedup 模式有效）。
+6. `avg_dedup_removed`：单样本平均去重移除数量（仅 cache_dedup 模式有效）。
+7. `avg_elapsed_ms`：单样本平均端到端耗时（检索 + QA + 校验）。
+
+## 27) Day 20 - 延迟与成本统计（每次请求 token 与耗时）
+
+Day 20 goal: profile per-request QA token cost and stage latency on the same offline eval set.
+
+Run Day 20 script:
+
+```bash
+python run_day20_latency_cost_analysis.py --use-rerank
+```
+
+Optional parameters:
+
+```bash
+python run_day20_latency_cost_analysis.py \
+	--corpus-file inputs/day8_corpus_backend_notes.txt \
+	--evalset-file inputs/day15_evalset_qa.json \
+	--chunk-size 80 \
+	--overlap 20 \
+	--top-k 3 \
+	--candidate-top-n 8 \
+	--use-rerank \
+	--hybrid-vector-weight 0.70 \
+	--hybrid-keyword-weight 0.30 \
+	--rrf-k 60 \
+	--max-attempts 1 \
+	--eval-retries 1 \
+	--eval-retry-backoff 1.0 \
+	--qa-timeout-seconds 45 \
+	--embedding-model nomic-embed-text \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day20_latency_cost_analysis.md`（token 与延迟统计报告）
+- `experiments/day20_latency_cost_analysis.csv`（结构化汇总）
+- `logs/day20_latency_cost_analysis.jsonl`（逐样本明细）
+
+Metrics:
+1. `qa_total_tokens_avg / p50 / p95`：每次 QA 请求 token 成本分布。
+2. `end_to_end_ms_avg / p50 / p95`：单样本端到端耗时分布。
+3. `qa_ms_avg / p50 / p95`：问答阶段耗时分布。
+4. `embedding_ms_avg`：向量召回阶段平均耗时。
+5. `avg_embedding_request_count`：单样本平均 embedding 请求次数。
+6. `cache_hit_rate`：缓存查找命中率（仅 cache_dedup 模式有效）。
+7. `avg_dedup_removed`：单样本平均去重移除数量（仅 cache_dedup 模式有效）。
+
+Notes:
+1. QA token 取自接口 `usage`，是精确值。
+2. embedding 接口当前不返回 usage，因此 Day20 仅统计 embedding 请求次数与耗时，不统计 embedding token。
+
+## 28) Day 21 - RAG V2 发布（带指标面板/评测报告）
+
+Day 21 goal: generate a release-ready KPI panel and gate decision from Day18/Day19/Day20 results.
+
+Run Day 21 script:
+
+```bash
+python run_day21_rag_v2_release.py
+```
+
+Optional parameters:
+
+```bash
+python run_day21_rag_v2_release.py \
+	--day18-csv experiments/day18_hybrid_retrieval_comparison.csv \
+	--day19-csv experiments/day19_cache_dedup_comparison_full_20260706.csv \
+	--day20-csv experiments/day20_latency_cost_analysis_full_20260706.csv \
+	--target-mode cache_dedup \
+	--min-retrieval-hit-rate 0.85 \
+	--min-citation-correct-rate 0.60 \
+	--min-citation-format-valid-rate 0.65 \
+	--min-insufficient-correct-rate 0.50 \
+	--max-qa-total-tokens-avg 680 \
+	--max-end-to-end-ms-avg 10000 \
+	--max-end-to-end-ms-p95 17000
+```
+
+Generated files:
+- `experiments/day21_rag_v2_release_report.md`（发布评测报告 + 指标面板）
+- `logs/day21_rag_v2_release_summary.json`（发布门禁摘要）
+
+Release output:
+1. KPI panel: Day18/Day19/Day20 key metrics side-by-side.
+2. Gate checks: quality and cost/latency threshold checks.
+3. Release decision: `GO` / `NO-GO`.

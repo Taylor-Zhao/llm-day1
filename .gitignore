@@ -3,5 +3,12 @@ __pycache__/
 *.pyc
 .env
 logs/
-experiments/
+experiments/*
+!experiments/day15_evalset_design.md
+!experiments/day16_offline_eval.md
+!experiments/day17_query_rewrite_comparison.md
+!experiments/day18_hybrid_retrieval_comparison.md
+!experiments/day19_cache_dedup_comparison_full_20260706.md
+!experiments/day20_latency_cost_analysis_full_20260706.md
+!experiments/day21_rag_v2_release_report.md
 .DS_Store

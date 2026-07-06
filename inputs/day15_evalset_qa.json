@@ -1,0 +1,276 @@
+{
+  "meta": {
+    "name": "day15_rag_evalset_backend_notes",
+    "version": "1.0.0",
+    "created_utc": "2026-07-05T00:00:00Z",
+    "language": "zh-CN",
+    "source_corpus": "inputs/day8_corpus_backend_notes.txt",
+    "description": "Day15 评测集：用于 Day16 离线评测（命中率、引用正确率、信息不足判定）。"
+  },
+  "cases": [
+    {
+      "id": "D15-001",
+      "question": "后端日志排查为什么建议先看 5xx 比例和 p95/p99 延迟？",
+      "answerable": true,
+      "reference_answer": "因为 5xx 比例和尾延迟可以快速反映系统是否发生异常抖动。若两者短时间同步升高，通常意味着依赖服务或资源池出现瓶颈。",
+      "answer_keypoints": ["5xx 比例", "p95/p99", "同步升高", "依赖服务或资源池瓶颈"],
+      "expected_source_keywords": ["错误比例", "p95/p99", "依赖服务或资源池出现瓶颈"],
+      "category": "observability",
+      "difficulty": "easy",
+      "notes": "单段可答"
+    },
+    {
+      "id": "D15-002",
+      "question": "如果 5xx 与 p95/p99 同时上升，最可能说明什么问题？",
+      "answerable": true,
+      "reference_answer": "通常说明依赖服务变慢或资源池打满等瓶颈问题，而不是单一接口的偶发抖动。",
+      "answer_keypoints": ["同步升高", "依赖服务变慢", "资源池瓶颈"],
+      "expected_source_keywords": ["两者同步升高", "依赖服务或资源池"],
+      "category": "observability",
+      "difficulty": "easy",
+      "notes": "语义改写题"
+    },
+    {
+      "id": "D15-003",
+      "question": "数据库连接池成为瓶颈时有哪些典型症状？",
+      "answerable": true,
+      "reference_answer": "典型症状包括 wait_count 激增、active 连接打满、慢查询增加。",
+      "answer_keypoints": ["wait_count 激增", "active 连接打满", "慢查询增加"],
+      "expected_source_keywords": ["wait_count", "active 连接打满", "慢查询"],
+      "category": "database",
+      "difficulty": "easy",
+      "notes": "枚举型"
+    },
+    {
+      "id": "D15-004",
+      "question": "排查数据库连接池问题时，除了连接池参数，还应对比哪些维度？",
+      "answerable": true,
+      "reference_answer": "应同时对比 SQL 执行时间、锁等待、连接池参数和应用线程数，避免只盯单点指标。",
+      "answer_keypoints": ["SQL 执行时间", "锁等待", "连接池参数", "应用线程数"],
+      "expected_source_keywords": ["SQL 执行时间", "锁等待", "应用线程数"],
+      "category": "database",
+      "difficulty": "medium",
+      "notes": "多要点题"
+    },
+    {
+      "id": "D15-005",
+      "question": "缓存命中率下降会带来什么连锁影响？",
+      "answerable": true,
+      "reference_answer": "缓存命中率下降会放大下游压力，导致数据库和远程服务请求突增。",
+      "answer_keypoints": ["放大下游压力", "数据库请求突增", "远程服务请求突增"],
+      "expected_source_keywords": ["缓存命中率下降", "数据库和远程服务请求会突增"],
+      "category": "cache",
+      "difficulty": "easy",
+      "notes": "因果题"
+    },
+    {
+      "id": "D15-006",
+      "question": "排查缓存命中率下降时，文档建议重点检查哪四类问题？",
+      "answerable": true,
+      "reference_answer": "建议检查缓存 key 设计、过期策略、批量失效，以及是否出现缓存穿透。",
+      "answer_keypoints": ["key 设计", "过期策略", "批量失效", "缓存穿透"],
+      "expected_source_keywords": ["缓存 key 设计", "过期策略", "批量失效", "缓存穿透"],
+      "category": "cache",
+      "difficulty": "easy",
+      "notes": "枚举型"
+    },
+    {
+      "id": "D15-007",
+      "question": "微服务链路里为什么上游超时不一定是根因？",
+      "answerable": true,
+      "reference_answer": "因为上游超时可能只是下游单点变慢引发的级联表现，真实根因可能在更下游。",
+      "answer_keypoints": ["级联", "下游单点变慢", "上游并非根因"],
+      "expected_source_keywords": ["超时链路会级联", "下游单点变慢"],
+      "category": "microservice",
+      "difficulty": "medium",
+      "notes": "机制解释题"
+    },
+    {
+      "id": "D15-008",
+      "question": "针对级联超时，调用链观测上建议做什么统一动作？",
+      "answerable": true,
+      "reference_answer": "建议在网关、服务入口和 DAO 层统一记录 trace_id，并串联调用链进行定位。",
+      "answer_keypoints": ["网关", "服务入口", "DAO 层", "统一记录 trace_id", "串联调用链"],
+      "expected_source_keywords": ["网关", "服务入口", "DAO 层", "trace_id"],
+      "category": "microservice",
+      "difficulty": "easy",
+      "notes": "定位流程题"
+    },
+    {
+      "id": "D15-009",
+      "question": "容器化环境中，哪些因素会影响尾延迟？",
+      "answerable": true,
+      "reference_answer": "CPU 抢占与内存回收会影响尾延迟，此外突发扩缩容导致冷启动也会带来抖动。",
+      "answer_keypoints": ["CPU 抢占", "内存回收", "冷启动"],
+      "expected_source_keywords": ["CPU 抢占", "内存回收", "冷启动"],
+      "category": "container",
+      "difficulty": "easy",
+      "notes": "因素识别题"
+    },
+    {
+      "id": "D15-010",
+      "question": "排查容器尾延迟，文档建议查看哪些观测项？",
+      "answerable": true,
+      "reference_answer": "应检查节点负载、容器限额、GC 日志，以及是否存在突发扩缩容引起的冷启动。",
+      "answer_keypoints": ["节点负载", "容器限额", "GC 日志", "扩缩容冷启动"],
+      "expected_source_keywords": ["节点负载", "容器限额", "GC 日志", "突发扩缩容"],
+      "category": "container",
+      "difficulty": "medium",
+      "notes": "枚举型"
+    },
+    {
+      "id": "D15-011",
+      "question": "为什么接口设计里幂等和重试必须一起考虑？",
+      "answerable": true,
+      "reference_answer": "因为只做重试不做幂等会导致重复写入，必须结合幂等键和存储约束来保证安全重试。",
+      "answer_keypoints": ["只重试不幂等", "重复写入", "幂等键", "存储层约束"],
+      "expected_source_keywords": ["只做重试不做幂等", "重复写入"],
+      "category": "api-design",
+      "difficulty": "easy",
+      "notes": "原则题"
+    },
+    {
+      "id": "D15-012",
+      "question": "文档对幂等落地给了哪两条关键建议？",
+      "answerable": true,
+      "reference_answer": "建议明确幂等键生命周期，并在存储层建立唯一约束。",
+      "answer_keypoints": ["幂等键生命周期", "存储层唯一约束"],
+      "expected_source_keywords": ["幂等键生命周期", "唯一约束"],
+      "category": "api-design",
+      "difficulty": "easy",
+      "notes": "提炼题"
+    },
+    {
+      "id": "D15-013",
+      "question": "高并发故障期为什么文档强调限流和降级比横向扩容更快见效？",
+      "answerable": true,
+      "reference_answer": "因为限流和降级可以立刻减少冲击流量并保护核心路径，通常比新增容量更快稳定系统。",
+      "answer_keypoints": ["高并发", "限流降级更快", "保护核心路径", "快速稳定"],
+      "expected_source_keywords": ["限流和降级策略比横向扩容更快见效", "优先保护核心接口"],
+      "category": "resilience",
+      "difficulty": "medium",
+      "notes": "对比题"
+    },
+    {
+      "id": "D15-014",
+      "question": "高并发下，非核心请求应如何处理以避免雪崩？",
+      "answerable": true,
+      "reference_answer": "非核心请求可排队或返回兜底结果，从而避免雪崩并缩短故障恢复时间。",
+      "answer_keypoints": ["非核心请求", "排队", "兜底结果", "避免雪崩", "缩短恢复"],
+      "expected_source_keywords": ["非核心请求可排队或返回兜底结果", "避免雪崩"],
+      "category": "resilience",
+      "difficulty": "easy",
+      "notes": "策略题"
+    },
+    {
+      "id": "D15-015",
+      "question": "RAG 文本切分里 chunk 太小和太大各有什么问题？",
+      "answerable": true,
+      "reference_answer": "chunk 太小会丢失上下文，chunk 太大会引入噪声，都会影响召回与回答质量。",
+      "answer_keypoints": ["太小丢上下文", "太大引入噪声", "影响召回质量"],
+      "expected_source_keywords": ["chunk 太小会丢上下文", "chunk 太大又会引入噪声"],
+      "category": "rag-chunking",
+      "difficulty": "easy",
+      "notes": "核心概念题"
+    },
+    {
+      "id": "D15-016",
+      "question": "针对切分参数，文档建议用什么方法选折中点？",
+      "answerable": true,
+      "reference_answer": "建议在 chunk size 和 overlap 上做网格实验，再结合评测集选择折中参数。",
+      "answer_keypoints": ["chunk size", "overlap", "网格实验", "评测集选择折中点"],
+      "expected_source_keywords": ["网格实验", "评测集选择折中点"],
+      "category": "rag-chunking",
+      "difficulty": "easy",
+      "notes": "方法题"
+    },
+    {
+      "id": "D15-017",
+      "question": "如果你观察到 wait_count 激增且缓存命中率下降，应该优先怀疑哪类系统状态？",
+      "answerable": true,
+      "reference_answer": "应优先怀疑系统正处于下游压力放大和资源池瓶颈并发发生的状态，需要同时看数据库与缓存链路。",
+      "answer_keypoints": ["wait_count 激增", "缓存命中率下降", "下游压力放大", "资源池瓶颈并发"],
+      "expected_source_keywords": ["wait_count 激增", "缓存命中率下降", "请求会突增"],
+      "category": "cross-topic",
+      "difficulty": "hard",
+      "notes": "跨段综合题"
+    },
+    {
+      "id": "D15-018",
+      "question": "当出现级联超时时，除了 trace_id 你还应联动哪些层做观测闭环？",
+      "answerable": true,
+      "reference_answer": "应联动网关、服务入口、DAO 层统一打点，结合延迟与错误趋势还原完整调用链。",
+      "answer_keypoints": ["网关", "服务入口", "DAO", "统一打点", "调用链"],
+      "expected_source_keywords": ["网关", "服务入口", "DAO 层", "trace_id"],
+      "category": "cross-topic",
+      "difficulty": "medium",
+      "notes": "跨句融合"
+    },
+    {
+      "id": "D15-019",
+      "question": "在高并发场景中，为什么先做核心接口保护有助于故障恢复？",
+      "answerable": true,
+      "reference_answer": "优先保护核心接口可防止关键链路被非核心流量挤占，减少雪崩风险并缩短恢复时间。",
+      "answer_keypoints": ["核心接口保护", "关键链路", "减少雪崩", "缩短恢复"],
+      "expected_source_keywords": ["优先保护核心接口", "避免雪崩", "缩短故障恢复时间"],
+      "category": "resilience",
+      "difficulty": "medium",
+      "notes": "因果解释"
+    },
+    {
+      "id": "D15-020",
+      "question": "文档是否给出了 Kafka 消费积压的专项排查步骤？",
+      "answerable": false,
+      "reference_answer": "当前信息不足，给定语料未提供 Kafka 消费积压的专项排查步骤。",
+      "answer_keypoints": ["当前信息不足", "语料未覆盖 Kafka 积压"],
+      "expected_source_keywords": [],
+      "category": "insufficient-info",
+      "difficulty": "easy",
+      "notes": "拒答样本"
+    },
+    {
+      "id": "D15-021",
+      "question": "文档有没有说明 Redis 集群分片迁移的具体流程？",
+      "answerable": false,
+      "reference_answer": "当前信息不足，语料中没有 Redis 分片迁移流程的具体说明。",
+      "answer_keypoints": ["当前信息不足", "语料未覆盖 Redis 分片迁移"],
+      "expected_source_keywords": [],
+      "category": "insufficient-info",
+      "difficulty": "easy",
+      "notes": "拒答样本"
+    },
+    {
+      "id": "D15-022",
+      "question": "是否提供了 JVM 参数调优（如 G1 参数）的推荐模板？",
+      "answerable": false,
+      "reference_answer": "当前信息不足。语料只提到应检查 GC 日志，并未给出 JVM 参数模板。",
+      "answer_keypoints": ["当前信息不足", "仅提到 GC 日志", "未给出参数模板"],
+      "expected_source_keywords": [],
+      "category": "insufficient-info",
+      "difficulty": "medium",
+      "notes": "边界拒答样本"
+    },
+    {
+      "id": "D15-023",
+      "question": "文档是否定义了统一的 SLO 阈值（例如 p99 必须小于 200ms）？",
+      "answerable": false,
+      "reference_answer": "当前信息不足，语料只讨论了 p95/p99 作为观测指标，没有给出统一阈值标准。",
+      "answer_keypoints": ["当前信息不足", "只提观测指标", "未定义阈值"],
+      "expected_source_keywords": [],
+      "category": "insufficient-info",
+      "difficulty": "medium",
+      "notes": "边界拒答样本"
+    },
+    {
+      "id": "D15-024",
+      "question": "如果回答里提到了熔断器半开状态探测周期，是否能在该语料中找到依据？",
+      "answerable": false,
+      "reference_answer": "不能。当前信息不足，语料没有给出熔断器半开状态探测周期的细节。",
+      "answer_keypoints": ["当前信息不足", "语料未给出熔断器半开周期"],
+      "expected_source_keywords": [],
+      "category": "insufficient-info",
+      "difficulty": "hard",
+      "notes": "防幻觉样本"
+    }
+  ]
+}
