@@ -1410,14 +1410,151 @@ sequenceDiagram
 
 ### 和 LangChain 的关系
 
-Day25 到 Day28 这一组脚本，没有直接依赖 LangChain，但它们在结构上基本对应 LangChain 里最核心的 agent 组件：
+Day25 到 Day28 这一组脚本，先是手写实现了一个轻量版的 LangChain 风格 agent；现在又新增了一个真正基于 LangChain 的合并版 demo：`run_day25_day28_langchain_demo.py`。
 
-- Day25 的 `build_plan()` + `execute_step()` + `summarize_results()`，对应典型的 planner / tool executor / final response 闭环。
-- Day26 的 `execute_step_with_retry()` 和 `retry_llm_call()`，对应 LangChain 里常见的 retry / resilience 包装。
-- Day27 的 `append_audit_event()`，对应 LangChain 的 callback / tracing 思路，类似把每次工具调用和尝试过程写进可追踪日志。
-- Day28 的 `print_demo_summary()` + `write_report()`，对应一个可演示的 Agent Demo 入口，和 LangChain 的 `AgentExecutor` + demo wrapper 很接近。
+- 新版 `run_day25_day28_langchain_demo.py` 使用了 `ChatOpenAI`、`@tool`、`BaseCallbackHandler`、`with_structured_output()`，把 Day25-28 的结构直接映射成 LangChain 里的 planner、tools、callbacks、retry 和 demo wrapper。
+- Day25 的 `build_plan()` 对应 LangChain 的结构化输出规划。
+- Day26 的 `retry_call()` 对应 LangChain 里的重试与容错包装。
+- Day27 的 `AuditCallbackHandler` 对应 LangChain callback / tracing。
+- Day28 的 `write_report()` + CLI 入口对应一个可以直接演示的 Agent demo。
 
-一句话总结：这些天的内容是在手写实现一个轻量版的 LangChain 风格 agent 架构，重点是把“规划、工具调用、重试、审计、总结”这些核心能力拆开、串起来，而不是直接引入框架本身。
+一句话总结：这些天的内容先是手写实现了一个轻量版的 LangChain 风格 agent 架构，随后又补了一个真正基于 LangChain 的版本，重点是把“规划、工具调用、重试、审计、总结”这些核心能力拆开、串起来。
+
+### LangChain 版实现
+
+```bash
+python run_day25_day28_langchain_demo.py
+```
+
+Optional parameters:
+
+```bash
+python run_day25_day28_langchain_demo.py \
+	--question "请完成接口联调：先识别可用 endpoint，再请求 order_id=1001，最后总结联调结果" \
+	--prompt prompts/day25_day28_langchain_demo_cn.txt \
+	--temperature 0 \
+	--max-tokens 700 \
+	--max-steps 6 \
+	--max-attempts 3 \
+	--retry-backoff-seconds 0.5 \
+	--timeout-seconds 15 \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day25_day28_langchain_demo.md`
+- `logs/day25_day28_langchain_demo.jsonl`
+- `logs/day25_day28_langchain_demo.audit.jsonl`
+
+LangChain official docs:
+- https://python.langchain.com/
+
+LangChain version features used here:
+1. `ChatOpenAI`：连接 OpenAI-compatible 模型服务。
+2. `with_structured_output()`：把计划输出约束成 `Plan` / `PlanStep`。
+3. `@tool`：把函数注册成 LangChain 工具。
+4. `BaseCallbackHandler`：记录链路、LLM 和工具调用审计。
+5. `retry_call()`：在 LangChain 外围包一层重试和退避。
+
+### LangChain 版业务流程图（方法级）
+
+```mermaid
+flowchart TD
+	A["main\n启动 LangChain Demo"] --> B["build_llm\n创建 ChatOpenAI"]
+	B --> C["build_plan\nwith_structured_output Plan"]
+	C --> D["retry_call\n包装 plan_generation"]
+	D --> E{"Plan.plan 为空?"}
+	E -->|是| F["build_default_plan\n回退到默认计划"]
+	E -->|否| G["append_jsonl + append_audit_event\n记录 analysis"]
+	F --> G
+	G --> H{"for step in plan.plan"}
+	H --> I["execute_step\n按 tool 分发"]
+	I --> J["normalize_step_args\n补全 url / params / json_body"]
+	J --> K{"tool 名称"}
+	K -->|list_mock_endpoints| L["list_mock_endpoints\n@tool"]
+	K -->|http_get| M["http_get\n@tool + allowlist"]
+	K -->|http_post| N["http_post\n@tool + allowlist"]
+	L --> O["retry_call\n包装 tool 调用"]
+	M --> O
+	N --> O
+	O --> P["append_jsonl + append_audit_event\n记录 tool 结果"]
+	P --> H
+	H -->|完成| Q["summarize_once\nLLM 生成最终总结"]
+	Q --> R["retry_call\n包装 summary_generation"]
+	R --> S{"总结成功?"}
+	S -->|是| T["append_jsonl + append_audit_event\n记录 summary"]
+	S -->|否| U["build_fallback_summary\n本地兜底总结"]
+	U --> T
+	T --> V["write_report\n输出 Markdown 报告"]
+	T --> W["main\n打印演示结果"]
+```
+
+### LangChain 版业务时序图（方法级）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant Main as main()
+	participant LLM as build_llm()/ChatOpenAI
+	participant Planner as build_plan()
+	participant Retry as retry_call()
+	participant CB as AuditCallbackHandler
+	participant Step as execute_step()
+	participant Norm as normalize_step_args()
+	participant GET as http_get()
+	participant POST as http_post()
+	participant Sum as summarize_once()
+	participant FB as build_fallback_summary()
+	participant Report as write_report()
+
+	U->>Main: 提交联调问题
+	Main->>LLM: build_llm(args)
+	Main->>Planner: build_plan(llm, prompt_path, question)
+	Planner->>Retry: retry_call(plan_generation, _invoke)
+	Retry->>CB: on_chain_start / on_llm_start
+	Retry->>LLM: with_structured_output(Plan).invoke(...)
+	LLM-->>Retry: Plan / 或空计划
+	Retry->>CB: on_llm_end / on_chain_end
+	alt 计划为空或失败
+		Planner->>FB: build_default_plan(question)
+		FB-->>Main: 默认计划
+	else 计划成功
+		Planner-->>Main: LangChain 计划
+	end
+	loop 每个 step
+		Main->>Step: execute_step(step)
+		Step->>Norm: normalize_step_args(step)
+		alt tool = list_mock_endpoints
+			Step->>Retry: retry_call(tool:list_mock_endpoints)
+			Retry->>CB: on_tool_start / on_tool_end
+			Retry->>GET: list_mock_endpoints.invoke()
+			GET-->>Retry: endpoint list
+		else tool = http_get
+			Step->>Retry: retry_call(tool:http_get)
+			Retry->>CB: on_tool_start / on_tool_end
+			Retry->>GET: http_get.invoke(url, params)
+			GET-->>Retry: HTTP result
+		else tool = http_post
+			Step->>Retry: retry_call(tool:http_post)
+			Retry->>CB: on_tool_start / on_tool_end
+			Retry->>POST: http_post.invoke(url, json_body)
+			POST-->>Retry: HTTP result
+		end
+		Retry-->>Main: tool_result
+	end
+	Main->>Sum: summarize_once(llm, question, plan, results)
+	Sum->>Retry: retry_call(summary_generation, _invoke)
+	Retry->>CB: on_llm_start / on_llm_end
+	Retry->>LLM: llm.invoke(messages)
+	alt 总结失败
+		Sum->>FB: build_fallback_summary(...)
+		FB-->>Sum: fallback summary
+	else 总结成功
+		LLM-->>Retry: summary text
+		Retry-->>Sum: summary text
+	end
+	Sum->>Report: write_report()
+```
 
 Business Mermaid diagrams:
 
