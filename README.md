@@ -724,6 +724,16 @@ What to observe:
 Technical Mermaid diagrams:
 - `experiments/day8_day14_technical_mermaid.md` (Day8-Day14 技术细节版流程图/时序图/参数指标图)
 
+Business/Report Mermaid diagrams:
+- `experiments/day15_evalset_design.md` (Day15 业务流程图/时序图)
+- `experiments/day16_offline_eval.md` (Day16 业务流程图/时序图)
+- `experiments/day17_query_rewrite_comparison.md` (Day17 业务流程图/时序图)
+- `experiments/day18_hybrid_retrieval_comparison.md` (Day18 业务流程图/时序图 + 技术图解)
+- `experiments/day19_cache_dedup_comparison_full_20260706.md` (Day19 业务流程图/时序图 + 技术图解)
+- `experiments/day20_latency_cost_analysis_full_20260706.md` (Day20 业务流程图/时序图)
+- `experiments/day21_rag_v2_release_report.md` (Day21 业务流程图/时序图)
+- `experiments/day22_function_calling_basics.md` (Day22 业务流程图/时序图)
+
 ## 22) Day 15 - 设计评测集（20-30 条问答基准）
 
 Day 15 goal: build a reusable eval set for offline RAG benchmarking.
@@ -991,3 +1001,503 @@ Release output:
 1. KPI panel: Day18/Day19/Day20 key metrics side-by-side.
 2. Gate checks: quality and cost/latency threshold checks.
 3. Release decision: `GO` / `NO-GO`.
+
+## 29) Day 22 - 学习函数调用机制，定义 2-3 个工具
+
+Day 22 goal: build a minimal function-calling demo with 3 local tools on top of the OpenAI-compatible chat API.
+
+Run Day 22 script:
+
+```bash
+python run_day22_function_calling_basics.py
+```
+
+Optional parameters:
+
+```bash
+python run_day22_function_calling_basics.py \
+	--question "payment 服务现在应该联系谁？顺便帮我算一下 12 + 30" \
+	--system-prompt prompts/day22_tool_calling_assistant_cn.txt \
+	--temperature 0 \
+	--max-tokens 600 \
+	--max-tool-rounds 4 \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day22_function_calling_basics.md`（函数调用报告）
+- `logs/day22_function_calling_basics.jsonl`（逐步调用日志）
+
+Built-in tools:
+1. `add_numbers(a, b)`：计算两个数之和。
+2. `lookup_service_owner(service)`：查询服务负责人和值班渠道。
+3. `search_incident_playbook(topic)`：查询内置故障处理手册片段。
+
+Business Mermaid diagrams:
+
+### 业务流程图（Day22 函数调用基础版）
+
+```mermaid
+flowchart TD
+	A[接收用户问题] --> B[模型判断是否需要调用工具]
+	B -->|需要| C[输出 tool_calls]
+	C --> D[本地执行工具\n计算/负责人查询/手册查询]
+	D --> E[把工具结果回填给模型]
+	E --> F[模型汇总最终答案]
+	B -->|不需要| F
+	F --> G[记录调用日志与报告]
+```
+
+### 业务时序图（Day22 工具调用闭环）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant M as 模型
+	participant T1 as 服务负责人工具
+	participant T2 as 故障手册工具
+	participant R as 报告/日志
+
+	U->>M: 提交复合问题
+	M-->>U: 声明需要调用工具
+	M->>T1: lookup_service_owner(payment)
+	T1-->>M: owner/slack/severity
+	M->>T2: search_incident_playbook(timeout)
+	T2-->>M: timeout 处理建议
+	M->>M: 汇总工具结果生成最终回答
+	M->>R: 写入 tool_calls、tool_result、assistant_final
+```
+
+## 30) Day 23 - 做“数据库查询助手”（自然语言转 SQL，带安全限制）
+
+Day 23 goal: build a read-only database assistant that converts natural language to SQL through tool calling and enforces safety restrictions.
+
+Run Day 23 script:
+
+```bash
+python run_day23_database_query_assistant.py
+```
+
+Optional parameters:
+
+```bash
+python run_day23_database_query_assistant.py \
+	--question "找出最近已支付订单金额最高的 3 位客户" \
+	--system-prompt prompts/day23_database_query_assistant_cn.txt \
+	--database data/day23_demo.sqlite3 \
+	--temperature 0 \
+	--max-tokens 700 \
+	--max-tool-rounds 6 \
+	--row-limit 20 \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day23_database_query_assistant.md`（SQL 助手报告）
+- `logs/day23_database_query_assistant.jsonl`（逐步调用日志）
+
+Built-in tools:
+1. `list_tables()`：查看当前数据库有哪些表。
+2. `describe_table(table_name)`：查看某张表的字段定义。
+3. `run_readonly_sql(sql, limit)`：执行只读 SQL，自动限制最大返回行数。
+
+Safety restrictions:
+1. 仅允许 `SELECT` / `WITH` 查询。
+2. 拒绝 `INSERT` / `UPDATE` / `DELETE` / `DROP` / `ALTER` / `CREATE` 等写操作。
+3. 只以 SQLite 只读连接执行 SQL。
+4. 对结果行数设置上限，避免一次返回过多数据。
+
+Business Mermaid diagrams:
+
+### 业务流程图（Day23 数据库查询助手）
+
+```mermaid
+flowchart TD
+	A[启动脚本] --> B[ensure_demo_database\n初始化演示 SQLite 数据]
+	B --> C[build_schema_summary\n构建真实表结构摘要]
+	C --> D[chat_once_with_tools\n模型接收问题与 schema]
+	D --> E{是否返回 tool_calls}
+	E -->|是| F[execute_tool_call\n执行 list_tables / describe_table / run_readonly_sql]
+	F --> G[validate_readonly_sql\n校验只读 SQL 安全性]
+	G --> H[open_readonly_connection\n只读连接 SQLite]
+	H --> I[run_readonly_sql\n返回查询结果]
+	I --> J[append_jsonl\n记录工具调用日志]
+	J --> D
+	E -->|否| K[生成最终中文答案]
+	K --> L[write_report\n输出 Markdown 报告]
+```
+
+### 业务时序图（Day23 自然语言转 SQL 闭环）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant Main as main()
+	participant DB as ensure_demo_database()
+	participant Schema as build_schema_summary()
+	participant LLM as chat_once_with_tools()
+	participant Tool as execute_tool_call()
+	participant SQL as run_readonly_sql()
+	participant Report as write_report()
+
+	U->>Main: 输入自然语言查询问题
+	Main->>DB: 初始化演示数据库
+	Main->>Schema: 读取 list_tables()/describe_table()
+	Schema-->>Main: 返回真实 schema 摘要
+	Main->>LLM: 发送问题 + schema + tool specs
+	LLM-->>Main: 返回 tool_calls(run_readonly_sql)
+	Main->>Tool: execute_tool_call(tool_call)
+	Tool->>SQL: validate_readonly_sql(sql)
+	SQL->>SQL: open_readonly_connection()
+	SQL-->>Tool: 返回 rows / row_count
+	Tool-->>Main: 返回 tool_result
+	Main->>LLM: 回填 role=tool 结果
+	LLM-->>Main: 返回最终中文总结
+	Main->>Report: write_report() + append_jsonl()
+```
+
+## 31) Day 24 - 做“接口联调助手”（可调用 HTTP 工具）
+
+Day 24 goal: build an HTTP integration assistant that can call API-like tools and summarize integration results.
+
+Run Day 24 script:
+
+```bash
+python run_day24_http_integration_assistant.py
+```
+
+Optional parameters:
+
+```bash
+python run_day24_http_integration_assistant.py \
+	--question "请联调订单查询接口：检查 order_id=1001 是否存在并返回状态" \
+	--system-prompt prompts/day24_http_integration_assistant_cn.txt \
+	--temperature 0 \
+	--max-tokens 700 \
+	--max-tool-rounds 6 \
+	--timeout-seconds 15 \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day24_http_integration_assistant.md`（HTTP 联调助手报告）
+- `logs/day24_http_integration_assistant.jsonl`（逐步调用日志）
+
+Built-in tools:
+1. `list_mock_endpoints()`：查看可联调的 mock API 列表。
+2. `http_get(url, params)`：执行 GET 请求（带 URL 白名单）。
+3. `http_post(url, json_body)`：执行 POST 请求（带 URL 白名单）。
+
+Safety restrictions:
+1. 只允许访问白名单域名（默认 `https://httpbin.org`）。
+2. 请求超时可配置，避免接口长时间阻塞。
+3. 返回内容长度裁剪，避免日志过大。
+
+Business Mermaid diagrams:
+
+### 业务流程图（Day24 接口联调助手）
+
+```mermaid
+flowchart TD
+	A[启动脚本] --> B[parse_args\n读取联调参数]
+	B --> C[load_system_prompt\n加载联调提示词]
+	C --> D[chat_once_with_tools\n模型分析并决定调用 HTTP 工具]
+	D --> E{是否返回 tool_calls}
+	E -->|是| F[execute_tool_call\n分发 list_mock_endpoints/http_get/http_post]
+	F --> G[ensure_allowed_url\n校验 https + 白名单 host]
+	G --> H[http_get/http_post\n发起 HTTP 请求]
+	H --> I[trim_text\n裁剪响应内容]
+	I --> J[append_jsonl\n记录每一步调用]
+	J --> D
+	E -->|否| K[生成最终联调结论]
+	K --> L[write_report\n输出 Day24 报告]
+```
+
+### 业务时序图（Day24 模型-工具-HTTP 闭环）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant Main as main()
+	participant LLM as chat_once_with_tools()
+	participant Tool as execute_tool_call()
+	participant Check as ensure_allowed_url()
+	participant HTTP as http_get()/http_post()
+	participant Log as append_jsonl()
+	participant Report as write_report()
+
+	U->>Main: 提交接口联调问题
+	Main->>LLM: 发送问题 + tool specs
+	LLM-->>Main: 返回 tool_calls
+	Main->>Tool: execute_tool_call(tool_call)
+	Tool->>Check: 校验 URL 白名单与协议
+	Check-->>Tool: 校验通过/拒绝
+	alt 通过
+		Tool->>HTTP: 发起 GET/POST 请求
+		HTTP-->>Tool: status_code + body
+	else 拒绝
+		Tool-->>Main: 返回安全拦截错误
+	end
+	Main->>Log: 记录 tool_result
+	Main->>LLM: 回填 role=tool 结果
+	LLM-->>Main: 返回最终联调总结
+	Main->>Report: write_report() 输出报告
+```
+
+## 32) Day 25 - 加入任务编排（多步：分析 -> 调工具 -> 汇总）
+
+Day 25 goal: orchestrate a multi-step workflow with explicit phases: analysis, tool execution, and summary.
+
+Run Day 25 script:
+
+```bash
+python run_day25_task_orchestration.py
+```
+
+Optional parameters:
+
+```bash
+python run_day25_task_orchestration.py \
+	--question "请完成接口联调：先识别可用 endpoint，再请求 order_id=1001，最后总结联调结果" \
+	--planner-prompt prompts/day25_task_orchestrator_cn.txt \
+	--temperature 0 \
+	--max-tokens 700 \
+	--max-steps 6 \
+	--timeout-seconds 15 \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day25_task_orchestration.md`（任务编排报告）
+- `logs/day25_task_orchestration.jsonl`（编排步骤日志）
+
+Orchestration phases:
+1. Analysis：模型先产出执行计划（JSON step plan）。
+2. Tool Execution：脚本按计划逐步调用工具并记录结果。
+3. Summary：模型基于计划+执行结果生成最终联调总结。
+
+Built-in tools:
+1. `list_mock_endpoints()`
+2. `http_get(url, params)`
+3. `http_post(url, json_body)`
+
+## 33) Day 26-28 - 合并版 Agent Demo（失败重试 / 审计日志 / 演示版）
+
+Day 26 goal: add failure retry and timeout handling for both tool execution and LLM calls.
+
+Day 27 goal: add an audit trail so every tool attempt can be traced.
+
+Day 28 goal: package the whole flow into a demo-ready agent entrypoint.
+
+Run the merged demo script:
+
+```bash
+python run_day26_day28_agent_demo.py
+```
+
+Optional parameters:
+
+```bash
+python run_day26_day28_agent_demo.py \
+	--question "请完成接口联调：先识别可用 endpoint，再请求 order_id=1001，最后总结联调结果" \
+	--planner-prompt prompts/day26_day28_agent_demo_cn.txt \
+	--temperature 0 \
+	--max-tokens 700 \
+	--max-steps 6 \
+	--max-tool-attempts 3 \
+	--retry-backoff-seconds 0.5 \
+	--timeout-seconds 15 \
+	--model qwen2.5:0.5b
+```
+
+Generated files:
+- `experiments/day26_day28_agent_demo.md`（合并版 Agent Demo 报告）
+- `logs/day26_day28_agent_demo.jsonl`（编排步骤日志）
+- `logs/day26_day28_agent_demo.audit.jsonl`（审计日志）
+
+Built-in methods:
+1. `build_plan()`：生成执行计划，失败时回退到默认计划。
+2. `execute_step_with_retry()`：执行工具并对超时/瞬时错误重试。
+3. `append_audit_event()`：写入每一步可追踪的审计记录。
+4. `summarize_results()`：生成最终总结，失败时回退到本地兜底总结。
+5. `write_report()`：输出适合演示的 Markdown 报告。
+
+Business Mermaid diagrams:
+
+### 业务流程图（Day26-28 合并版 Agent Demo）
+
+```mermaid
+flowchart TD
+	A[main\n启动合并版 Demo] --> B[build_plan\nLLM 生成 JSON 计划]
+	B --> C{计划成功?}
+	C -->|是| D[append_jsonl + append_audit_event\n记录分析阶段]
+	C -->|否| E[build_default_plan\n回退到默认计划]
+	E --> D
+	D --> F{逐步执行 plan}
+	F --> G[execute_step_with_retry\n归一化参数 + 重试]
+	G --> H{工具类型}
+	H -->|list_mock_endpoints| I[list_mock_endpoints]
+	H -->|http_get| J[http_get\nHTTPS 白名单 + timeout]
+	H -->|http_post| K[http_post\nHTTPS 白名单 + timeout]
+	I --> L[append_jsonl + append_audit_event\n记录 step 结果]
+	J --> L
+	K --> L
+	L --> F
+	F -->|完成| M[summarize_results\nLLM 总结 + 重试]
+	M --> N{总结成功?}
+	N -->|是| O[append_jsonl + append_audit_event\n记录 summary]
+	N -->|否| P[build_fallback_summary\n本地兜底总结]
+	P --> O
+	O --> Q[write_report\n输出 Day26-28 报告]
+	O --> R[print_demo_summary\n输出演示友好结果]
+```
+
+### 业务时序图（Day26-28 方法级闭环）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant Main as main()
+	participant Planner as build_plan()
+	participant LLM as retry_llm_call()/chat_once()
+	participant Audit as append_audit_event()
+	participant Step as execute_step_with_retry()
+	participant GET as http_get()
+	participant POST as http_post()
+	participant Summary as summarize_results()
+	participant Fallback as build_fallback_summary()
+	participant Report as write_report()
+
+	U->>Main: 提交联调目标
+	Main->>Planner: build_plan(question, planner_prompt)
+	Planner->>LLM: chat_once(生成 JSON plan)
+	alt 计划成功
+		LLM-->>Planner: plan + usage
+	else 计划失败/超时
+		Planner->>Audit: 记录 plan_fallback_used
+		Planner-->>Main: 默认计划
+	end
+	Main->>Audit: append_audit_event(run_started)
+
+	loop 每个计划步骤
+		Main->>Step: execute_step_with_retry(step)
+		alt tool = list_mock_endpoints
+			Step-->>Main: endpoint list
+		else tool = http_get
+			Step->>GET: http_get(url, params)
+			GET-->>Step: status_code + body
+			Step-->>Main: tool_result
+		else tool = http_post
+			Step->>POST: http_post(url, json_body)
+			POST-->>Step: status_code + body
+			Step-->>Main: tool_result
+		end
+		Step->>Audit: 记录 attempt / retry / result
+	end
+
+	Main->>Summary: summarize_results(plan, execution_results)
+	Summary->>LLM: chat_once(生成最终总结)
+	alt 总结成功
+		LLM-->>Summary: summary_text
+	else 总结失败/超时
+		Summary->>Fallback: build_fallback_summary(...)
+		Fallback-->>Summary: fallback summary
+	end
+	Summary->>Audit: 记录 summary_source
+	Main->>Report: write_report()
+	Main->>Audit: run_completed
+```
+
+### 和 LangChain 的关系
+
+Day25 到 Day28 这一组脚本，没有直接依赖 LangChain，但它们在结构上基本对应 LangChain 里最核心的 agent 组件：
+
+- Day25 的 `build_plan()` + `execute_step()` + `summarize_results()`，对应典型的 planner / tool executor / final response 闭环。
+- Day26 的 `execute_step_with_retry()` 和 `retry_llm_call()`，对应 LangChain 里常见的 retry / resilience 包装。
+- Day27 的 `append_audit_event()`，对应 LangChain 的 callback / tracing 思路，类似把每次工具调用和尝试过程写进可追踪日志。
+- Day28 的 `print_demo_summary()` + `write_report()`，对应一个可演示的 Agent Demo 入口，和 LangChain 的 `AgentExecutor` + demo wrapper 很接近。
+
+一句话总结：这些天的内容是在手写实现一个轻量版的 LangChain 风格 agent 架构，重点是把“规划、工具调用、重试、审计、总结”这些核心能力拆开、串起来，而不是直接引入框架本身。
+
+Business Mermaid diagrams:
+
+### 业务流程图（Day25 任务编排三阶段）
+
+```mermaid
+flowchart TD
+	A[main\n启动编排脚本] --> B[parse_args + load_dotenv\n读取参数与环境变量]
+	B --> C[load_system_prompt\n加载 planner 提示词]
+	C --> D[build_plan\n调用 chat_once 生成 JSON 计划]
+	D --> E[extract_json_payload\n解析与校验计划 JSON]
+	E --> F[append_jsonl phase=analysis\n记录分析阶段]
+	F --> G{for step in plan\n逐步执行}
+	G --> H[execute_step\n归一化 tool args]
+	H --> I{tool_name}
+	I -->|list_mock_endpoints| J[list_mock_endpoints]
+	I -->|http_get| K[http_get\nensure_allowed_url + HTTP GET]
+	I -->|http_post| L[http_post\nensure_allowed_url + HTTP POST]
+	J --> M[append_jsonl phase=tool_execution]
+	K --> M
+	L --> M
+	M --> G
+	G -->|完成| N[summarize_results\n调用 chat_once 生成总结]
+	N --> O[append_jsonl phase=summary]
+	N --> P[write_report\n输出 Markdown 报告]
+	N -.异常/超时.-> Q[build_fallback_summary\n本地兜底总结]
+	Q --> O
+	Q --> P
+```
+
+### 业务时序图（Day25 方法级编排闭环）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant Main as main()
+	participant Planner as build_plan()
+	participant LLM as chat_once()
+	participant Log as append_jsonl()
+	participant Exec as execute_step()
+	participant GET as http_get()
+	participant POST as http_post()
+	participant Summary as summarize_results()
+	participant Fallback as build_fallback_summary()
+	participant Report as write_report()
+
+	U->>Main: 提交编排目标问题
+	Main->>Planner: build_plan(question, planner_prompt)
+	Planner->>LLM: chat_once(生成 JSON plan)
+	LLM-->>Planner: plan 文本
+	Planner-->>Main: plan 列表
+	Main->>Log: append_jsonl(phase=analysis)
+
+	loop 每个计划步骤
+		Main->>Exec: execute_step(step)
+		alt tool = list_mock_endpoints
+			Exec-->>Main: endpoint 列表
+		else tool = http_get
+			Exec->>GET: http_get(url, params)
+			GET-->>Exec: status_code + body
+			Exec-->>Main: tool_result
+		else tool = http_post
+			Exec->>POST: http_post(url, json_body)
+			POST-->>Exec: status_code + body
+			Exec-->>Main: tool_result
+		end
+		Main->>Log: append_jsonl(phase=tool_execution)
+	end
+
+	Main->>Summary: summarize_results(plan, execution_results)
+	Summary->>LLM: chat_once(生成最终总结)
+	alt 总结成功
+		LLM-->>Summary: final summary
+		Summary-->>Main: summary_text
+	else 总结超时/异常
+		Summary-->>Main: 抛出异常
+		Main->>Fallback: build_fallback_summary(...)
+		Fallback-->>Main: fallback summary
+	end
+
+	Main->>Log: append_jsonl(phase=summary)
+	Main->>Report: write_report(plan, execution_results, summary)
+```

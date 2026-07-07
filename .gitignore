@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 .env
-logs/
+logs/*
 experiments/*
 !experiments/day15_evalset_design.md
 !experiments/day16_offline_eval.md
@@ -11,4 +11,11 @@ experiments/*
 !experiments/day19_cache_dedup_comparison_full_20260706.md
 !experiments/day20_latency_cost_analysis_full_20260706.md
 !experiments/day21_rag_v2_release_report.md
+!experiments/day22_function_calling_basics.md
+!experiments/day23_database_query_assistant.md
+!experiments/day24_http_integration_assistant.md
+!experiments/day25_task_orchestration.md
+!experiments/day26_day28_agent_demo.md
+!logs/day26_day28_agent_demo.jsonl
+!logs/day26_day28_agent_demo.audit.jsonl
 .DS_Store
