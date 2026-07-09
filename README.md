@@ -1638,3 +1638,93 @@ sequenceDiagram
 	Main->>Log: append_jsonl(phase=summary)
 	Main->>Report: write_report(plan, execution_results, summary)
 ```
+
+## 34) Day22-Day28 总结（阶段演进）
+
+Day22 到 Day28 的主线是把一个“可调用模型”逐步打磨成“可执行、可恢复、可追踪、可演示”的 Agent 闭环。
+
+1. Day22：函数调用基础，建立工具调用最小闭环。
+2. Day23：数据库查询助手，把自然语言映射到 SQL，并加入安全限制。
+3. Day24：HTTP 联调助手，把工具能力扩展到接口调试场景。
+4. Day25：三阶段任务编排（分析 -> 工具执行 -> 总结）。
+5. Day26：失败重试和超时退避，提升稳定性与成功率。
+6. Day27：审计日志全链路记录，提升可观测性和可追溯性。
+7. Day28：Demo 化交付，输出报告与日志，支持兜底总结不断流。
+
+### Day22-Day28 能力演进图
+
+```mermaid
+flowchart LR
+    D22["Day22\n函数调用基础"] --> D23["Day23\n数据库查询助手"]
+    D23 --> D24["Day24\nHTTP 联调助手"]
+    D24 --> D25["Day25\n任务编排三阶段"]
+    D25 --> D26["Day26\n重试与超时治理"]
+    D26 --> D27["Day27\n审计日志与追踪"]
+    D27 --> D28["Day28\nDemo 化交付"]
+    D28 --> LC["LangChain 对齐\nPlanner + Tools + Callback"]
+```
+
+### Day22-Day28 统一执行时序图
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent Main
+    participant P as Planner LLM
+    participant T as Tool Layer
+    participant S as Summary LLM
+    participant L as Audit/JSONL
+    participant R as Report
+
+    U->>A: 提交目标问题
+    A->>L: run_started(trace_id)
+    A->>P: 生成计划（analysis）
+    alt 计划成功
+        P-->>A: plan
+    else 计划失败
+        A->>A: fallback_plan()
+        A->>L: plan_fallback_used
+    end
+
+    loop 按步骤执行
+        A->>L: tool_attempt_started
+        A->>T: execute_step(args)
+        alt 成功
+            T-->>A: ok result
+            A->>L: tool_attempt_finished(ok=1)
+        else 失败且可重试
+            A->>L: tool_retry_scheduled
+            A->>T: retry with backoff
+        else 最终失败
+            T-->>A: error result
+            A->>L: tool_attempt_finished(ok=0)
+        end
+        A->>L: append_jsonl(step_result)
+    end
+
+    A->>S: 生成总结（summary）
+    alt 总结成功
+        S-->>A: summary_text
+    else 总结失败
+        A->>A: build_fallback_summary()
+        A->>L: summary_fallback_used
+    end
+
+    A->>R: write_report(markdown)
+    A->>L: run_completed
+    A-->>U: 返回报告与日志路径
+```
+
+### Day22-Day28 与 LangChain API 映射表
+
+| 阶段能力 | 当前手写实现 | LangChain 对应能力 | 说明 |
+|---|---|---|---|
+| Day22 函数调用起步 | `chat_once` + 本地工具分发 | `ChatOpenAI.invoke` + `@tool` | 从手工路由升级到标准工具抽象 |
+| Day23 SQL 助手 | 工具白名单 + SQL 安全约束 | `@tool` + 参数 schema + guardrail | 约束和调用边界可统一治理 |
+| Day24 HTTP 联调 | `http_get/http_post` + allowlist | `@tool` + callback 观测 | 工具调用可被追踪并复用 |
+| Day25 任务编排 | `build_plan` -> `execute_step` -> `summarize_results` | Planner chain -> tool chain -> summary chain | 三阶段工作流与 LangChain 结构天然对齐 |
+| Day26 重试与退避 | `retry_llm_call`、`execute_step_with_retry` | runnable 外层重试策略 | 把瞬时错误转为可恢复流程 |
+| Day27 审计日志 | `append_audit_event` + JSONL | `BaseCallbackHandler` tracing | 事件级追踪可串联全链路 |
+| Day28 演示交付 | `write_report` + CLI 入口 + fallback | chain 包装 + artifact 输出 | 形成可运行、可解释、可展示的 demo |
+
+补充：在 `run_day26_day28_agent_demo.py` 中，`build_plan_once` 和 `summarize_results_once` 仍是直接通过 `chat_once` 调用模型；在 LangChain 版脚本中对应为 `ChatOpenAI.invoke`/结构化输出调用。
