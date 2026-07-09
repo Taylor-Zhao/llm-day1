@@ -1728,3 +1728,158 @@ sequenceDiagram
 | Day28 演示交付 | `write_report` + CLI 入口 + fallback | chain 包装 + artifact 输出 | 形成可运行、可解释、可展示的 demo |
 
 补充：在 `run_day26_day28_agent_demo.py` 中，`build_plan_once` 和 `summarize_results_once` 仍是直接通过 `chat_once` 调用模型；在 LangChain 版脚本中对应为 `ChatOpenAI.invoke`/结构化输出调用。
+
+## 35) Week 5 启动：Day29-Day31 合并项目（LoRA/QLoRA + 数据构造 + 小规模 SFT）
+
+目标：用一个连续项目覆盖 Day29-Day31 的关键知识点与可运行流程。
+
+### Day29：LoRA/QLoRA 概念学习
+
+运行：
+
+```bash
+python run_day29_lora_qlora_notes.py
+```
+
+输出：
+- `experiments/day29_lora_qlora_notes.md`
+- `logs/day29_lora_qlora_notes.jsonl`
+
+### Day30：构造后端指令数据（50-200 条）
+
+运行（默认 120 条，20 条留作评测集）：
+
+```bash
+python run_day30_build_instruction_dataset.py
+```
+
+自定义样本规模：
+
+```bash
+python run_day30_build_instruction_dataset.py --samples 150 --eval-size 30 --seed 42
+```
+
+输出：
+- `data/day30_backend_sft_train.jsonl`
+- `data/day30_backend_sft_eval.jsonl`
+- `experiments/day30_instruction_dataset_report.md`
+- `logs/day30_instruction_dataset.jsonl`
+
+### Day31：小规模 SFT（LoRA / QLoRA）
+
+先安装 Day29-Day31 依赖：
+
+```bash
+pip install -r requirements_day29_day31.txt
+```
+
+运行 LoRA 训练（轻量默认）：
+
+```bash
+python run_day31_sft_lora_light.py
+```
+
+尝试 QLoRA（需要 CUDA 环境，macOS 通常会自动回退 LoRA）：
+
+```bash
+python run_day31_sft_lora_light.py --qlora
+```
+
+输出：
+- `outputs/day31_sft_lora/adapter/`（LoRA adapter）
+- `outputs/day31_sft_lora/tokenizer/`
+- `experiments/day31_sft_lora_report.md`
+- `logs/day31_sft_lora.jsonl`
+
+### Day29-Day31 一体化流程图
+
+```mermaid
+flowchart TD
+	A[Day29: LoRA/QLoRA 概念与方案] --> B[Day30: 生成 50-200 条后端指令数据]
+	B --> C[拆分 train/eval 数据集]
+	C --> D[Day31: 小模型 LoRA SFT]
+	D --> E[可选 QLoRA 4-bit 加载]
+	E --> F[导出 adapter 与训练报告]
+```
+
+实践建议：
+1. 先跑通 LoRA，再切 QLoRA，定位问题更清晰。
+2. Day32 对比时务必固定评测集（`day30_backend_sft_eval.jsonl`）。
+3. 如果机器资源有限，优先降低 `--max-steps` 与 `--max-seq-len`。
+
+调试说明（QLoRA）：
+1. 已提供 `Debug Day31 SFT QLoRA Attempt` 启动项用于快速验证量化分支。
+2. 在 macOS 或无 CUDA 环境下，脚本会打印告警并自动回退到 LoRA，这是预期行为。
+3. 若希望真正启用 QLoRA，建议在 Linux + NVIDIA CUDA 环境运行，并确保量化依赖可用。
+
+### Day29-Day31 代码流程图（方法级）
+
+```mermaid
+flowchart TD
+	A[run_day29_lora_qlora_notes.py main] --> B[parse_args]
+	B --> C[build_report]
+	C --> D[write experiments/day29_lora_qlora_notes.md]
+	D --> E[append_jsonl logs/day29_lora_qlora_notes.jsonl]
+
+	E --> F[run_day30_build_instruction_dataset.py main]
+	F --> G[parse_args + 参数校验]
+	G --> H[build_one_sample 批量合成样本]
+	H --> I[train/eval 切分]
+	I --> J[dump_jsonl 输出 train/eval]
+	J --> K[build_report 输出 Day30 报告]
+	K --> L[append_jsonl 记录元数据]
+
+	L --> M[run_day31_sft_lora_light.py main]
+	M --> N[read_jsonl 读取 train/eval]
+	N --> O[AutoTokenizer + AutoModelForCausalLM]
+	O --> P{--qlora 且 CUDA?}
+	P -->|是| Q[BitsAndBytesConfig 4-bit]
+	P -->|否| R[LoRA 常规加载]
+	Q --> S[SFTConfig + SFTTrainer]
+	R --> S
+	S --> T[trainer.train]
+	T --> U[trainer.evaluate]
+	U --> V[save_pretrained adapter/tokenizer]
+	V --> W[write Day31 report + append_jsonl]
+```
+
+### Day29-Day31 代码时序图（执行链路）
+
+```mermaid
+sequenceDiagram
+	participant Dev as 开发者
+	participant D29 as Day29脚本
+	participant D30 as Day30脚本
+	participant FS as 文件系统
+	participant D31 as Day31脚本
+	participant HF as HuggingFace/TRL
+
+	Dev->>D29: 运行 Day29
+	D29->>D29: parse_args + build_report
+	D29->>FS: 写 Day29 markdown + jsonl
+
+	Dev->>D30: 运行 Day30
+	D30->>D30: 生成样本并切分 train/eval
+	D30->>FS: 写 train.jsonl / eval.jsonl
+	D30->>FS: 写 Day30 report + log
+
+	Dev->>D31: 运行 Day31
+	D31->>FS: 读 train/eval jsonl
+	D31->>HF: 加载 tokenizer/model
+	alt 启用QLoRA且CUDA可用
+		D31->>HF: 4-bit quantization
+	else 使用LoRA
+		D31->>HF: LoRA config
+	end
+	D31->>HF: SFTTrainer.train
+	D31->>HF: SFTTrainer.evaluate
+	D31->>FS: 保存 adapter/tokenizer
+	D31->>FS: 写 Day31 report + jsonl
+```
+
+### Day29-Day31 总结
+
+1. Day29 完成了 LoRA/QLoRA 的概念建模，明确了“低资源微调”的技术边界和目标。
+2. Day30 完成了后端场景指令数据生产，形成了可复现的 train/eval 数据资产。
+3. Day31 跑通了小规模 SFT（LoRA）训练闭环，完成了从数据到 adapter 的端到端验证。
+4. 当前阶段结论是：轻量微调流程已可运行，下一步重点应转向 Day32 的固定评测集前后对比。

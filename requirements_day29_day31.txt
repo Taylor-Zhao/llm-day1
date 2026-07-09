@@ -1,0 +1,11 @@
+# Week 5 (Day29-Day31) lightweight SFT dependencies
+# Install with: pip install -r requirements_day29_day31.txt
+# Note: QLoRA (4-bit) generally requires Linux + NVIDIA GPU.
+
+torch>=2.2.0,<2.3.0
+transformers>=4.41.0
+datasets>=2.18.0
+peft>=0.10.0
+trl>=0.8.6
+accelerate>=0.28.0
+bitsandbytes>=0.43.3; platform_system == "Linux"

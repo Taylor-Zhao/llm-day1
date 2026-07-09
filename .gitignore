@@ -17,8 +17,14 @@ experiments/*
 !experiments/day25_task_orchestration.md
 !experiments/day26_day28_agent_demo.md
 !experiments/day25_day28_langchain_demo.md
+!experiments/day29_lora_qlora_notes.md
+!experiments/day30_instruction_dataset_report.md
+!experiments/day31_sft_lora_report.md
 !logs/day26_day28_agent_demo.jsonl
 !logs/day26_day28_agent_demo.audit.jsonl
 !logs/day25_day28_langchain_demo.jsonl
 !logs/day25_day28_langchain_demo.audit.jsonl
+!logs/day29_lora_qlora_notes.jsonl
+!logs/day30_instruction_dataset.jsonl
+!logs/day31_sft_lora.jsonl
 .DS_Store

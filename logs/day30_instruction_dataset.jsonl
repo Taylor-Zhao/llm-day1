@@ -1,0 +1,1 @@
+{"timestamp_utc": "2026-07-09T09:55:25.360354+00:00", "phase": "day30_dataset", "samples": 60, "eval_size": 12, "seed": 42, "train_file": "data/day30_backend_sft_train.jsonl", "eval_file": "data/day30_backend_sft_eval.jsonl", "report": "experiments/day30_instruction_dataset_report.md"}
