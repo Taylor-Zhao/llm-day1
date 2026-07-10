@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Day 35: aggregate Day29-Day34 outputs into a concise SFT experiment report."""
+"""Day 35: aggregate Day29-Day34 outputs into a concise SFT experiment report.
+
+教学阅读导向：
+1) Day35 是“汇总层”，不再训练/推理，而是消费前几天的日志产物。
+2) 核心目标是把 训练(31) + 质量(32) + 速度(33) 串成一份可交付报告。
+3) 同时写入一条摘要 JSONL，便于后续做长期趋势看板。
+"""
 
 import argparse
 import json
@@ -13,12 +19,14 @@ PROJECT_DIR = Path(__file__).resolve().parent
 
 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    # 统一 JSONL 追加写：Day35 只写一条摘要记录，供后续长期追踪使用。
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    # 通用 JSONL 读取器：按行解析为字典列表。
     if not path.exists():
         raise FileNotFoundError(f"jsonl file not found: {path}")
     rows: list[dict[str, Any]] = []
@@ -32,6 +40,7 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def parse_args() -> argparse.Namespace:
+    # 输入主要是 Day31/32/33 的日志路径，输出是 Day35 汇总报告与摘要日志路径。
     parser = argparse.ArgumentParser(description="Generate Day35 SFT experiment report")
     parser.add_argument("--day31-jsonl", default="logs/day31_sft_lora.jsonl", help="day31 summary jsonl")
     parser.add_argument("--day32-jsonl", default="logs/day32_sft_before_after_eval.jsonl", help="day32 detail jsonl")
@@ -42,10 +51,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def summarize_day32(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    # 对 Day32 逐样本评测明细做汇总：
+    # - 计算 base/tuned 平均质量分
+    # - 计算 tuned 胜出次数
+    # - 给出平均提升 delta
     if not rows:
         return {"base_avg": 0.0, "tuned_avg": 0.0, "win_count": 0, "sample_count": 0}
 
     # Day32 日志是追加写入；按 index=1 作为一次新运行的起点，只汇总最后一次运行。
+    # 这样可以避免“历史旧结果”污染本次报告结论。
     latest_start = 0
     for idx, row in enumerate(rows):
         if int(row.get("index") or 0) == 1:
@@ -74,6 +88,11 @@ def summarize_day32(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summarize_day33(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    # 对 Day33 加速结果汇总：
+    # 1) 同一 mode 可能多次运行，只保留最后一次
+    # 2) 过滤掉 _skipped 项
+    # 3) 选出 avg_seconds_per_sample 最小的最佳模式
+    # 4) 基于 base_serial_fp32 计算 speedup
     # Day33 同一个 mode 可能多次运行，这里只保留每个 mode 最后一次结果。
     latest_by_mode: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -82,6 +101,7 @@ def summarize_day33(rows: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         latest_by_mode[mode] = row
 
+    # _skipped 表示该模式在当前机器/环境不可用，不应参与最佳模式比较。
     benchmark_rows = [row for row in latest_by_mode.values() if not str(row.get("mode") or "").endswith("_skipped")]
     if not benchmark_rows:
         return {"best_mode": "N/A", "best_avg_seconds": 0.0}
@@ -108,6 +128,8 @@ def build_report(
     day32_summary: dict[str, Any],
     day33_summary: dict[str, Any],
 ) -> str:
+    # 报告目标：将 Day31(训练) + Day32(效果) + Day33(速度) 拼成可阅读的闭环结论。
+    # 其中结论与局限是固定模板，指标值来自最新日志汇总结果。
     train_metrics = day31_summary.get("train_metrics") or {}
     eval_metrics = day31_summary.get("eval_metrics") or {}
 
@@ -155,17 +177,26 @@ def build_report(
 
 
 def main() -> None:
+    # 教学视角主线：
+    # Step 1 读取各阶段日志（输入）
+    # Step 2 生成阶段摘要（中间态）
+    # Step 3 产出最终 markdown 报告（面向人）
+    # Step 4 写入摘要 jsonl（面向程序）
+    # 主流程：读取三天日志 -> 分别汇总 -> 生成 Day35 报告 -> 记录一条摘要 JSONL。
     args = parse_args()
     day31_rows = read_jsonl(resolve_project_path(args.day31_jsonl))
     day32_rows = read_jsonl(resolve_project_path(args.day32_jsonl))
     day33_rows = read_jsonl(resolve_project_path(args.day33_jsonl))
 
+    # Day31 通常是一轮一条 summary，取最后一条即可。
+    # 若不存在日志，回退为空字典，报告中会显示 N/A，不会直接崩溃。
     day31_summary = day31_rows[-1] if day31_rows else {}
     day32_summary = summarize_day32(day32_rows)
     day33_summary = summarize_day33(day33_rows)
 
     report_path = resolve_project_path(args.report)
     jsonl_path = resolve_project_path(args.jsonl)
+    # 先写 Markdown 报告供人读，再写 JSONL 摘要供程序消费。
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         build_report(day31_summary=day31_summary, day32_summary=day32_summary, day33_summary=day33_summary),
