@@ -1,0 +1,2 @@
+{"timestamp_utc": "2026-07-10T09:26:59.897173+00:00", "phase": "day35_sft_experiment_report", "day31_model_id": "HuggingFaceTB/SmolLM2-135M-Instruct", "day32_delta_quality": 0.16666666666666669, "day33_best_mode": "base_batch_fp32", "report": "experiments/day35_sft_experiment_report.md"}
+{"timestamp_utc": "2026-07-10T09:28:46.633953+00:00", "phase": "day35_sft_experiment_report", "day31_model_id": "HuggingFaceTB/SmolLM2-135M-Instruct", "day32_delta_quality": 0.16666666666666669, "day33_best_mode": "base_batch_fp32", "report": "experiments/day35_sft_experiment_report.md"}

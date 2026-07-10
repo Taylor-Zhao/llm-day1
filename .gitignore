@@ -20,6 +20,10 @@ experiments/*
 !experiments/day29_lora_qlora_notes.md
 !experiments/day30_instruction_dataset_report.md
 !experiments/day31_sft_lora_report.md
+!experiments/day32_sft_before_after_eval.md
+!experiments/day33_inference_acceleration_report.md
+!experiments/day34_unified_inference_api.md
+!experiments/day35_sft_experiment_report.md
 !logs/day26_day28_agent_demo.jsonl
 !logs/day26_day28_agent_demo.audit.jsonl
 !logs/day25_day28_langchain_demo.jsonl
@@ -27,4 +31,8 @@ experiments/*
 !logs/day29_lora_qlora_notes.jsonl
 !logs/day30_instruction_dataset.jsonl
 !logs/day31_sft_lora.jsonl
+!logs/day32_sft_before_after_eval.jsonl
+!logs/day33_inference_acceleration.jsonl
+!logs/day34_unified_inference_api.jsonl
+!logs/day35_sft_experiment_report.jsonl
 .DS_Store

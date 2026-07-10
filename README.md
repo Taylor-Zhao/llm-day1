@@ -1795,11 +1795,16 @@ python run_day31_sft_lora_light.py --qlora
 
 ```mermaid
 flowchart TD
-	A[Day29: LoRA/QLoRA 概念与方案] --> B[Day30: 生成 50-200 条后端指令数据]
-	B --> C[拆分 train/eval 数据集]
-	C --> D[Day31: 小模型 LoRA SFT]
-	D --> E[可选 QLoRA 4-bit 加载]
-	E --> F[导出 adapter 与训练报告]
+	A["Day29<br/>run_day29_lora_qlora_notes.py main"] --> B["parse_args + build_report<br/>输出概念说明与资源认知"]
+	B --> C["append_jsonl + write_text<br/>生成 Day29 报告与日志"]
+	C --> D["Day30<br/>run_day30_build_instruction_dataset.py main"]
+	D --> E["build_one_sample(...) * N<br/>模板化构造后端指令数据"]
+	E --> F["shuffle + split<br/>拆分 train/eval 数据集"]
+	F --> G["dump_jsonl + build_report<br/>输出 Day30 数据与报告"]
+	G --> H["Day31<br/>run_day31_sft_lora_light.py main"]
+	H --> I["AutoModelForCausalLM + LoraConfig<br/>构建 LoRA 或 QLoRA 训练"]
+	I --> J["SFTTrainer.train + evaluate<br/>完成小规模 SFT"]
+	J --> K["save_pretrained + write_report<br/>导出 adapter 与训练报告"]
 ```
 
 实践建议：
@@ -1847,34 +1852,47 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-	participant Dev as 开发者
-	participant D29 as Day29脚本
-	participant D30 as Day30脚本
+	participant U as 开发者
+	participant S29 as run_day29_lora_qlora_notes.py
+	participant S30 as run_day30_build_instruction_dataset.py
 	participant FS as 文件系统
-	participant D31 as Day31脚本
+	participant S31 as run_day31_sft_lora_light.py
 	participant HF as HuggingFace/TRL
 
-	Dev->>D29: 运行 Day29
-	D29->>D29: parse_args + build_report
-	D29->>FS: 写 Day29 markdown + jsonl
+	U->>S29: main()
+	S29->>S29: parse_args()
+	S29->>S29: build_report(args)
+	S29->>FS: write_text(day29_report)
+	S29->>FS: append_jsonl(day29_log)
 
-	Dev->>D30: 运行 Day30
-	D30->>D30: 生成样本并切分 train/eval
-	D30->>FS: 写 train.jsonl / eval.jsonl
-	D30->>FS: 写 Day30 report + log
+	U->>S30: main()
+	S30->>S30: parse_args()
+	S30->>S30: build_one_sample(...) * N
+	S30->>S30: shuffle + split(train, eval)
+	S30->>FS: dump_jsonl(train_file)
+	S30->>FS: dump_jsonl(eval_file)
+	S30->>S30: build_report(train_rows, eval_rows)
+	S30->>FS: write_text(day30_report)
+	S30->>FS: append_jsonl(day30_log)
 
-	Dev->>D31: 运行 Day31
-	D31->>FS: 读 train/eval jsonl
-	D31->>HF: 加载 tokenizer/model
+	U->>S31: main()
+	S31->>FS: read_jsonl(train_file)
+	S31->>FS: read_jsonl(eval_file)
+	S31->>HF: AutoTokenizer.from_pretrained()
+	S31->>HF: AutoModelForCausalLM.from_pretrained()
 	alt 启用QLoRA且CUDA可用
-		D31->>HF: 4-bit quantization
+		S31->>HF: BitsAndBytesConfig(...)
 	else 使用LoRA
-		D31->>HF: LoRA config
+		S31->>HF: LoraConfig(...)
 	end
-	D31->>HF: SFTTrainer.train
-	D31->>HF: SFTTrainer.evaluate
-	D31->>FS: 保存 adapter/tokenizer
-	D31->>FS: 写 Day31 report + jsonl
+	S31->>HF: SFTTrainer(...)
+	S31->>HF: trainer.train()
+	S31->>HF: trainer.evaluate()
+	S31->>FS: save_pretrained(adapter_dir)
+	S31->>FS: save_pretrained(tokenizer_dir)
+	S31->>S31: build_report(...)
+	S31->>FS: write_text(day31_report)
+	S31->>FS: append_jsonl(day31_log)
 ```
 
 ### Day29-Day31 总结
@@ -1883,3 +1901,472 @@ sequenceDiagram
 2. Day30 完成了后端场景指令数据生产，形成了可复现的 train/eval 数据资产。
 3. Day31 跑通了小规模 SFT（LoRA）训练闭环，完成了从数据到 adapter 的端到端验证。
 4. 当前阶段结论是：轻量微调流程已可运行，下一步重点应转向 Day32 的固定评测集前后对比。
+
+## 36) Day32 - 对比微调前后效果（固定评测集）
+
+Day32 goal: use one fixed eval set to compare base model vs LoRA-adapted model under the same generation settings.
+
+运行：
+
+```bash
+python run_day32_sft_before_after_eval.py
+```
+
+可选参数示例：
+
+```bash
+python run_day32_sft_before_after_eval.py \
+  --eval-file data/day30_backend_sft_eval.jsonl \
+  --base-model-id HuggingFaceTB/SmolLM2-135M-Instruct \
+  --adapter-dir outputs/day31_sft_lora/adapter \
+  --max-eval-samples 20
+```
+
+输出：
+- `experiments/day32_sft_before_after_eval.md`
+- `logs/day32_sft_before_after_eval.jsonl`
+
+评分说明：
+1. `section_score`：回答是否包含“结论/分析/操作步骤/风险”四个结构。
+2. `keyword_hit_ratio`：回答是否覆盖样本 tags 中的关键字。
+3. `quality`：`0.6 * section_score + 0.4 * keyword_hit_ratio`。
+
+### Day32 业务流程图
+
+```mermaid
+flowchart TD
+	A["main<br/>启动 Day32 对比评测"] --> B["parse_args + read_jsonl<br/>读取固定 eval 集"]
+	B --> C["load_models<br/>加载 base 模型与 LoRA 模型"]
+	C --> D["for each row in eval_rows<br/>逐样本评测"]
+	D --> E["build_prompt + generate_response(base)<br/>生成 base_answer"]
+	D --> F["build_prompt + generate_response(tuned)<br/>生成 tuned_answer"]
+	E --> G["section_score + keyword_hit_ratio<br/>计算 base 分数"]
+	F --> H["section_score + keyword_hit_ratio<br/>计算 tuned 分数"]
+	G --> I["delta + win_count<br/>统计提升情况"]
+	H --> I
+	I --> J["append_jsonl(detail)<br/>写入样本明细"]
+	J --> K["build_report + write_text<br/>输出 Day32 报告"]
+```
+
+### Day32 时序图
+
+```mermaid
+sequenceDiagram
+	participant U as 开发者
+	participant S32 as run_day32_sft_before_after_eval.py
+	participant FS as 文件系统
+	participant BM as 基础模型
+	participant TM as 微调模型(LoRA)
+
+	U->>S32: main()
+	S32->>S32: parse_args()
+	S32->>FS: read_jsonl(eval_file)
+	S32->>S32: load_models(base_model_id, adapter_dir)
+	S32->>BM: AutoModelForCausalLM.from_pretrained()
+	S32->>TM: PeftModel.from_pretrained()
+
+	loop 每个 eval 样本
+		S32->>S32: build_prompt(row)
+		S32->>BM: generate_response(base_model, tokenizer, row, args)
+		BM-->>S32: base_answer
+		S32->>TM: generate_response(tuned_model, tokenizer, row, args)
+		TM-->>S32: tuned_answer
+		S32->>S32: section_score()/keyword_hit_ratio()/quality
+		S32->>FS: append_jsonl(detail)
+	end
+
+	S32->>S32: build_report(...)
+	S32->>FS: write_text(day32_report)
+	S32-->>U: 返回报告路径
+```
+
+### Day29-Day32 理论说明（通俗版）
+
+#### 1. SFT 是什么
+
+SFT（Supervised Fine-Tuning，监督微调）可以理解成：
+给模型一批“题目 + 标准答案”，让模型学会按你希望的方式回答。
+
+如果把模型类比成一个刚入组、基础很强但不熟悉你们团队风格的后端工程师，那么：
+1. 预训练模型已经“知道很多知识”。
+2. SFT 不是重新培养他上大学，而是做一次岗位培训。
+3. 培训的目标不是让他变得无所不知，而是让他回答问题更像你们团队的标准方式。
+
+例如：
+1. 微调前，模型回答“订单接口超时怎么排查”时，可能内容发散、结构不稳定。
+2. 微调后，模型更可能按“结论 -> 分析 -> 操作步骤 -> 风险”这种结构回答。
+
+#### 2. LoRA / QLoRA 是什么
+
+LoRA 可以理解成“不给大模型整体动手术，而是给它加一个小插件”。
+
+核心思想：
+1. 冻结原始大模型参数。
+2. 只训练很小的一部分增量参数。
+3. 训练结束后，保存的是 adapter，而不是重新保存整个模型。
+
+QLoRA 则是在 LoRA 基础上进一步省资源：
+1. 原模型权重先量化到 4-bit。
+2. 再在这个更省显存的基础上做 LoRA 微调。
+3. 所以 QLoRA 通常比普通 LoRA 更节省显存，但也更依赖量化后端和 CUDA 环境。
+
+在 [run_day29_lora_qlora_notes.py](/Users/zhaoyonggng/work/llm-day1/run_day29_lora_qlora_notes.py) 里，`build_report()` 不是训练模型，而是在做三件事：
+1. 解释 LoRA、QLoRA、SFT 概念。
+2. 对比 LoRA 和 QLoRA 的资源差异。
+3. 用粗略计算帮助建立“为什么全参数训练贵、LoRA/QLoRA 更轻量”的直觉。
+
+#### 3. 指令数据是什么
+
+指令数据就是“模型训练用的标准问答样本”。
+
+在你这个项目里，一条典型数据大致包含：
+1. `instruction`：用户问题。
+2. `input`：补充输入。
+3. `output`：期望答案。
+4. `tags`：关键字，用于后续评测。
+
+在 [run_day30_build_instruction_dataset.py](/Users/zhaoyonggng/work/llm-day1/run_day30_build_instruction_dataset.py) 里，`build_one_sample()` 会：
+1. 从 `SERVICES` 里抽一个服务，比如“订单服务”。
+2. 从 `PROBLEMS` 里抽一个问题，比如“接口超时”。
+3. 从 `COMPONENTS` 里抽一个组件，比如“Redis”。
+4. 用 `INSTRUCTION_TEMPLATES` 拼成一条 instruction。
+5. 用 `OUTPUT_SKELETON` 生成统一结构的标准答案。
+
+例如可能构造出这样一条样本：
+1. instruction：请针对订单服务的接口超时给出可执行排查步骤。
+2. output：按“结论 / 分析 / 操作步骤 / 风险与回滚”给出完整回答。
+
+这一步本质上是在定义：
+“以后我希望模型怎么回答后端问题。”
+
+#### 4. Day31 的 SFT 训练到底在做什么
+
+在 [run_day31_sft_lora_light.py](/Users/zhaoyonggng/work/llm-day1/run_day31_sft_lora_light.py) 里，训练流程可以通俗理解成：
+1. 读取 Day30 产出的 train/eval 数据。
+2. 用 `format_example()` 把每条样本整理成统一文本格式。
+3. 加载基础模型和 tokenizer。
+4. 根据参数决定走 LoRA 还是 QLoRA 分支。
+5. 用 `LoraConfig` 定义 adapter 训练方式。
+6. 用 `SFTTrainer` 执行训练和评测。
+7. 保存 adapter 和 tokenizer。
+
+这里最关键的一点是：
+训练后保存的主要是 adapter，而不是重新保存整个基础模型。
+
+所以 Day31 的本质是：
+用 Day30 的标准问答样本，把基础模型微调成“更像你团队回答方式”的版本。
+
+#### 5. Day32 在干什么
+
+Day32 不是继续训练，而是在做“考试”。
+
+在 [run_day32_sft_before_after_eval.py](/Users/zhaoyonggng/work/llm-day1/run_day32_sft_before_after_eval.py) 里，流程是：
+1. 读取固定评测集 `day30_backend_sft_eval.jsonl`。
+2. 同时加载基础模型和“基础模型 + LoRA adapter”。
+3. 对同一条题目分别生成 `base_answer` 和 `tuned_answer`。
+4. 计算结构分 `section_score`。
+5. 计算关键字命中率 `keyword_hit_ratio`。
+6. 汇总出综合质量分 `quality`。
+
+这里的核心思想是：
+只有使用同一套固定评测题，才能公平比较“微调前后到底有没有提升”。
+
+例如：
+1. 基础模型可能只给出零散建议，没有“结论/分析/步骤/风险”的完整结构。
+2. 微调后模型更容易按你指定的结构回答。
+3. 如果它还更频繁地命中业务关键词，Day32 的评分就会更高。
+
+#### 6. 怎么整体理解 Day29-Day32
+
+可以把它当成一个完整闭环：
+1. Day29：决定方法。为什么不用全参数训练，而选 LoRA/QLoRA。
+2. Day30：准备教材。构造你希望模型学习的后端问答样本。
+3. Day31：实施培训。把这些样本喂给模型，训练出 adapter。
+4. Day32：统一考试。验证训练后模型是否真的比原模型更符合预期。
+
+再换一个更生活化的比喻：
+1. Day29 是决定“培训方案”。
+2. Day30 是编写“培训教材和标准答案”。
+3. Day31 是安排“集中培训”。
+4. Day32 是组织“统一考试”。
+
+#### 7. 结合当前项目的一个具体例子
+
+假设目标是让模型更擅长回答“后端故障排查”。
+
+那么这四天就是：
+1. Day29：先明确，用 LoRA/QLoRA 这种低成本方式来做定向能力增强。
+2. Day30：构造类似“订单服务接口超时怎么排查”的标准样本，并要求输出固定结构。
+3. Day31：训练模型，让它更容易学会这种后端答题风格。
+4. Day32：拿固定题目比较训练前后，验证它是否更结构化、更贴近业务关键词。
+
+如果 Day32 报告里：
+1. `tuned_avg_quality` 高于 `base_avg_quality`。
+2. `section_score` 提升明显。
+3. `keyword_hit_ratio` 也有提升。
+
+那就说明这次微调不是“只跑通了流程”，而是真的让模型输出更符合目标场景。
+
+## 37) Day33 - 推理加速（量化、批处理、并发）
+
+Day33 goal: compare several lightweight inference acceleration strategies on the same fixed prompt set.
+
+运行：
+
+```bash
+python run_day33_inference_acceleration_comparison.py
+```
+
+输出：
+- `experiments/day33_inference_acceleration_report.md`
+- `logs/day33_inference_acceleration.jsonl`
+
+说明：
+1. `base_serial_fp32`：基础模型串行生成。
+2. `base_batch_fp32`：基础模型批处理生成。
+3. `base_serial_dynamic_int8`：CPU 动态量化实验。
+4. `base_concurrent_fp32_xN`：多 worker 并发实验。
+5. `tuned_serial_fp32`：带 LoRA adapter 的串行生成。
+
+### Day33 业务流程图
+
+```mermaid
+flowchart TD
+	A["main<br/>启动 Day33 benchmark"] --> B["parse_args<br/>解析 benchmark 参数"]
+	B --> C["read_jsonl<br/>读取固定 eval 集"]
+	C --> D["build_prompts<br/>构造 prompts"]
+	D --> E["UnifiedInferenceEngine.load<br/>加载 base fp32 engine"]
+	E --> F["benchmark_engine<br/>base_serial_fp32"]
+	F --> G["benchmark_engine<br/>base_batch_fp32"]
+	G --> H["UnifiedInferenceEngine.load<br/>dynamic_int8 engine"]
+	H --> I["benchmark_engine<br/>base_serial_dynamic_int8"]
+	I --> J["benchmark_concurrent<br/>base_concurrent_fp32_xN"]
+	J --> K["UnifiedInferenceEngine.load<br/>tuned fp32 engine"]
+	K --> L["benchmark_engine<br/>tuned_serial_fp32"]
+	L --> M["build_report<br/>汇总 total avg throughput"]
+	M --> N["append_jsonl / write_text<br/>输出 Day33 报告与日志"]
+```
+
+### Day33 时序图
+
+```mermaid
+sequenceDiagram
+	participant U as 开发者
+	participant S33 as run_day33_inference_acceleration_comparison.py
+	participant API as UnifiedInferenceEngine
+	participant FS as 文件系统
+
+	U->>S33: main()
+	S33->>S33: parse_args()
+	S33->>FS: read_jsonl(eval_file)
+	S33->>S33: build_prompts(rows)
+	S33->>API: load(base fp32)
+	S33->>S33: benchmark_engine(base_serial_fp32)
+	S33->>API: generate(prompts, batch_size=1)
+	S33->>S33: benchmark_engine(base_batch_fp32)
+	S33->>API: generate(prompts, batch_size=batch_size)
+	S33->>API: load(dynamic_int8)
+	S33->>S33: benchmark_engine(base_serial_dynamic_int8)
+	S33->>S33: benchmark_concurrent(worker_count)
+	S33->>API: load(tuned fp32)
+	S33->>S33: benchmark_engine(tuned_serial_fp32)
+	S33->>S33: build_report(results)
+	S33->>FS: write_text(day33_report)
+	S33->>FS: append_jsonl(day33_log)
+```
+
+## 38) Day34 - 统一推理 API（便于替换模型）
+
+Day34 goal: encapsulate one reusable local inference API for base model, LoRA adapter, and multiple inference modes.
+
+运行：
+
+```bash
+python run_day34_unified_inference_api.py
+```
+
+输出：
+- `experiments/day34_unified_inference_api.md`
+- `logs/day34_unified_inference_api.jsonl`
+
+说明：
+1. `UnifiedInferenceEngine` 统一管理模型加载。
+2. 支持基础模型与 `adapter_dir` 挂载。
+3. 支持 `fp32` 与 `dynamic_int8` 两种推理模式。
+4. 支持单条或 batch 生成。
+
+### Day34 业务流程图
+
+```mermaid
+flowchart TD
+	A["main<br/>启动 Day34 demo"] --> B["parse_args<br/>解析 base_model_id adapter_dir inference_mode"]
+	B --> C["UnifiedInferenceEngine.__init__<br/>保存模型与模式配置"]
+	C --> D["UnifiedInferenceEngine.load<br/>加载 tokenizer"]
+	D --> E["AutoModelForCausalLM.from_pretrained<br/>加载 base model"]
+	E --> F{"adapter_dir 是否存在"}
+	F -->|是| G["PeftModel.from_pretrained<br/>挂载 LoRA adapter"]
+	F -->|否| H["继续使用 base model"]
+	G --> I{"inference_mode"}
+	H --> I
+	I -->|fp32| J["保持 fp32 推理路径"]
+	I -->|dynamic_int8| K["torch.quantization.quantize_dynamic<br/>应用 CPU 动态量化"]
+	J --> L["build_backend_prompt<br/>构造请求 prompt"]
+	K --> L
+	L --> M["UnifiedInferenceEngine.generate<br/>tokenizer(batch) + model.generate"]
+	M --> N["build_report / append_jsonl<br/>输出响应 报告 日志"]
+```
+
+### Day34 时序图
+
+```mermaid
+sequenceDiagram
+	participant U as 开发者
+	participant API as UnifiedInferenceEngine
+	participant HF as Transformers/Peft
+	participant FS as 文件系统
+
+	U->>API: __init__(base_model_id, adapter_dir, inference_mode)
+	U->>API: load()
+	API->>HF: AutoTokenizer.from_pretrained()
+	API->>HF: AutoModelForCausalLM.from_pretrained()
+	alt 提供 adapter_dir
+		API->>HF: PeftModel.from_pretrained()
+	end
+	alt inference_mode = dynamic_int8
+		API->>HF: quantize_dynamic()
+	end
+	U->>API: generate(prompts, batch_size, max_new_tokens)
+	API->>HF: tokenizer(prompts, padding=True)
+	API->>HF: model.generate(...)
+	HF-->>API: generated tokens
+	API->>HF: tokenizer.decode(new_tokens)
+	API-->>U: decoded responses
+	U->>FS: 写 Day34 report + jsonl
+```
+
+## 39) Day35 - 微调实验报告（结论 + 局限）
+
+Day35 goal: aggregate training, before/after evaluation, and inference acceleration into one final experiment report.
+
+运行：
+
+```bash
+python run_day35_sft_experiment_report.py
+```
+
+输出：
+- `experiments/day35_sft_experiment_report.md`
+- `logs/day35_sft_experiment_report.jsonl`
+
+### Day35 业务流程图
+
+```mermaid
+flowchart TD
+	A["main<br/>启动 Day35 report"] --> B["parse_args<br/>解析 Day31 Day32 Day33 输入"]
+	B --> C["read_jsonl<br/>读取 Day31 日志"]
+	C --> D["read_jsonl<br/>读取 Day32 日志"]
+	D --> E["read_jsonl<br/>读取 Day33 日志"]
+	E --> F["summarize_day32<br/>只汇总最后一次 Day32 运行"]
+	F --> G["summarize_day33<br/>只保留每个 mode 最后一次结果"]
+	G --> H["build_report<br/>聚合训练 质量 速度 结论 局限"]
+	H --> I["append_jsonl / write_text<br/>输出 Day35 总报告"]
+```
+
+### Day35 时序图
+
+```mermaid
+sequenceDiagram
+	participant U as 开发者
+	participant S35 as run_day35_sft_experiment_report.py
+	participant L31 as Day31日志
+	participant L32 as Day32日志
+	participant L33 as Day33日志
+	participant FS as 文件系统
+
+	U->>S35: main()
+	S35->>S35: parse_args()
+	S35->>L31: read_jsonl(day31_jsonl)
+	S35->>L32: read_jsonl(day32_jsonl)
+	S35->>L33: read_jsonl(day33_jsonl)
+	S35->>S35: summarize_day32(rows)
+	S35->>S35: summarize_day33(rows)
+	S35->>S35: build_report(...)
+	S35->>FS: write_text(day35_report)
+	S35->>FS: append_jsonl(day35_log)
+	S35-->>U: 返回最终实验报告路径
+```
+
+## 40) Day29-Day35 总结
+
+### Day29-Day35 总览图
+
+```mermaid
+flowchart LR
+	D29["Day29<br/>LoRA QLoRA 概念与资源认知"] --> D30["Day30<br/>构造指令数据 train eval"]
+	D30 --> D31["Day31<br/>SFT 训练产出 LoRA adapter"]
+	D31 --> D32["Day32<br/>固定评测集前后对比"]
+	D32 --> D33["Day33<br/>量化 批处理 并发加速实验"]
+	D33 --> D34["Day34<br/>统一推理 API 封装"]
+	D34 --> D35["Day35<br/>训练 质量 速度总报告"]
+```
+
+### Day29-Day35 总时序图
+
+```mermaid
+sequenceDiagram
+	participant U as 开发者
+	participant S29 as Day29脚本
+	participant S30 as Day30脚本
+	participant S31 as Day31脚本
+	participant S32 as Day32脚本
+	participant S33 as Day33脚本
+	participant S34 as Day34脚本/统一API
+	participant S35 as Day35脚本
+	participant FS as 文件系统
+
+	U->>S29: main()
+	S29->>S29: parse_args() / build_report()
+	S29->>FS: 写 Day29 report + log
+
+	U->>S30: main()
+	S30->>S30: build_one_sample(...) * N
+	S30->>FS: 写 train/eval 数据 + Day30 report
+
+	U->>S31: main()
+	S31->>FS: 读 train/eval 数据
+	S31->>S31: SFTTrainer.train() / evaluate()
+	S31->>FS: 写 adapter + Day31 report
+
+	U->>S32: main()
+	S32->>FS: 读固定 eval + adapter
+	S32->>S32: generate_response(base/tuned)
+	S32->>S32: 计算 quality 与 delta
+	S32->>FS: 写 Day32 detail log + report
+
+	U->>S33: main()
+	S33->>S34: UnifiedInferenceEngine.load()/generate()
+	S33->>S33: benchmark_engine()/benchmark_concurrent()
+	S33->>FS: 写 Day33 report + log
+
+	U->>S34: main()
+	S34->>S34: __init__()/load()/generate()
+	S34->>FS: 写 Day34 report + log
+
+	U->>S35: main()
+	S35->>FS: 读 Day31/Day32/Day33 日志
+	S35->>S35: summarize_day32()/summarize_day33()/build_report()
+	S35->>FS: 写 Day35 final report + log
+```
+
+Day29-Day35 可以整体理解为一条完整的“轻量微调实验链路”：
+
+1. Day29：先搞清楚 LoRA / QLoRA 为什么能低成本做模型定向增强。
+2. Day30：构造后端场景指令数据，把希望模型学到的回答方式显式写出来。
+3. Day31：执行 SFT 训练，产出 LoRA adapter。
+4. Day32：用固定评测集比较“微调前 vs 微调后”，判断训练是否真的带来收益。
+5. Day33：围绕实际部署再看推理速度，比较量化、批处理、并发等策略。
+6. Day34：把推理流程统一封装成 API，降低后续替换模型或切换模式的成本。
+7. Day35：把训练效果、评测结果、推理效率三部分合并成最终实验报告。
+
+如果再用一句话概括：
+Day29-Day35 不是单点实验，而是在搭建一个从“概念 -> 数据 -> 训练 -> 评测 -> 推理优化 -> 报告沉淀”的完整微调工程闭环。
