@@ -2175,6 +2175,35 @@ sequenceDiagram
 	S33->>FS: append_jsonl(day33_log)
 ```
 
+### Day33 函数调用关系图
+
+```mermaid
+flowchart TD
+	A["main"] --> B["parse_args"]
+	A --> C["resolve_project_path(eval_file/report/jsonl)"]
+	A --> D["read_jsonl"]
+	D --> E["json.loads"]
+	A --> F["build_prompts"]
+	F --> G["build_backend_prompt"]
+	A --> H["UnifiedInferenceEngine.load(base fp32)"]
+	A --> I["benchmark_engine(base_serial_fp32)"]
+	I --> J["engine.generate"]
+	A --> K["benchmark_engine(base_batch_fp32)"]
+	K --> J
+	A --> L["UnifiedInferenceEngine.load(dynamic_int8)"]
+	A --> M["benchmark_engine(base_serial_dynamic_int8)"]
+	M --> J
+	A --> N["benchmark_concurrent"]
+	N --> O["ThreadPoolExecutor.submit(engine.generate)"]
+	A --> P["benchmark_engine(tuned_serial_fp32)"]
+	P --> J
+	A --> Q["build_report"]
+	Q --> R["utc_now_iso"]
+	A --> S["append_jsonl(each result)"]
+	S --> R
+	S --> T["json.dumps"]
+```
+
 ## 38) Day34 - 统一推理 API（便于替换模型）
 
 Day34 goal: encapsulate one reusable local inference API for base model, LoRA adapter, and multiple inference modes.
@@ -2244,6 +2273,33 @@ sequenceDiagram
 	U->>FS: 写 Day34 report + jsonl
 ```
 
+### Day34 函数调用关系图
+
+```mermaid
+flowchart TD
+	A["main"] --> B["parse_args"]
+	A --> C["resolve_project_path(report/jsonl/adapter)"]
+	A --> D["UnifiedInferenceEngine.__init__"]
+	A --> E["UnifiedInferenceEngine.load"]
+	E --> F["AutoTokenizer.from_pretrained"]
+	E --> G["AutoModelForCausalLM.from_pretrained"]
+	E --> H{"adapter_dir?"}
+	H -->|yes| I["PeftModel.from_pretrained"]
+	E --> J{"inference_mode == dynamic_int8?"}
+	J -->|yes| K["torch.quantization.quantize_dynamic"]
+	E --> L["_infer_device"]
+	A --> M["build_backend_prompt"]
+	A --> N["UnifiedInferenceEngine.generate"]
+	N --> O["tokenizer(batch, padding/truncation)"]
+	N --> P["model.generate"]
+	N --> Q["tokenizer.decode(new_tokens)"]
+	A --> R["build_report"]
+	R --> S["utc_now_iso"]
+	A --> T["append_jsonl"]
+	T --> S
+	T --> U["json.dumps"]
+```
+
 ## 39) Day35 - 微调实验报告（结论 + 局限）
 
 Day35 goal: aggregate training, before/after evaluation, and inference acceleration into one final experiment report.
@@ -2294,6 +2350,31 @@ sequenceDiagram
 	S35->>FS: write_text(day35_report)
 	S35->>FS: append_jsonl(day35_log)
 	S35-->>U: 返回最终实验报告路径
+```
+
+### Day35 函数调用关系图
+
+```mermaid
+flowchart TD
+	A["main"] --> B["parse_args"]
+	A --> C["resolve_project_path(day31/day32/day33/report/jsonl)"]
+	A --> D["read_jsonl(day31)"]
+	A --> E["read_jsonl(day32)"]
+	A --> F["read_jsonl(day33)"]
+	D --> G["json.loads"]
+	E --> G
+	F --> G
+	A --> H["summarize_day32"]
+	H --> I["按 index=1 截取最后一次运行"]
+	A --> J["summarize_day33"]
+	J --> K["latest_by_mode 去重"]
+	J --> L["best_row(min avg_seconds_per_sample)"]
+	A --> M["build_report"]
+	M --> N["utc_now_iso"]
+	A --> O["report_path.write_text"]
+	A --> P["append_jsonl"]
+	P --> N
+	P --> Q["json.dumps"]
 ```
 
 ## 40) Day29-Day35 总结
