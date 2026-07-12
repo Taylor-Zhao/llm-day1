@@ -1791,6 +1791,88 @@ python run_day31_sft_lora_light.py --qlora
 - `experiments/day31_sft_lora_report.md`
 - `logs/day31_sft_lora.jsonl`
 
+#### Day31 输出目录说明
+
+`outputs/day31_sft_lora/` 可以理解为 Day31 的训练产物根目录，常见内容包括：
+
+1. `adapter/`：最终导出的 LoRA adapter 目录，也是 Day32/Day33/Day34 最常复用的结果。
+2. `tokenizer/`：训练时对应的 tokenizer 文件，保证后续推理和训练使用同一套分词规则。
+3. `checkpoint-XX/`：训练过程中的中间 checkpoint，用于断点恢复或查看某一步的训练状态。
+4. `README.md`：训练器自动生成的 model card，记录 base model、训练框架等元信息。
+
+其中几个关键文件的作用是：
+
+1. `adapter/adapter_model.safetensors`：LoRA 的核心增量权重，不是完整基础模型。
+2. `adapter/adapter_config.json`：LoRA 配置，例如 rank、target modules、任务类型等。
+3. `tokenizer/tokenizer.json`：tokenizer 主配置，定义分词行为。
+4. `tokenizer/vocab.json` + `tokenizer/merges.txt`：词表与 BPE merge 规则。
+5. `tokenizer/special_tokens_map.json`：特殊 token 映射关系。
+6. `tokenizer/chat_template.jinja`：聊天模型使用的 prompt 模板。
+
+如果看到 `checkpoint-20/` 之类的目录，通常说明在第 20 个训练 step 保存过一次中间状态。它除了包含 adapter 和 tokenizer 副本外，还会有：
+
+1. `optimizer.pt`：优化器状态。
+2. `scheduler.pt`：学习率调度器状态。
+3. `rng_state.pth`：随机数状态。
+4. `trainer_state.json`：训练器运行状态与日志历史。
+5. `training_args.bin`：训练参数快照。
+
+所以可以简单记成：
+
+1. `adapter/`：最终可用结果。
+2. `checkpoint-XX/`：训练中途存档。
+3. `tokenizer/`：配套分词器资源。
+
+#### Day31 报告指标怎么理解
+
+`experiments/day31_sft_lora_report.md` 里的内容大体分成两类：实验配置 + 训练/评测指标。
+
+实验配置字段：
+
+1. `基础模型`：这次微调基于哪个原始模型。
+2. `训练方式`：本次到底走的是 LoRA 还是 QLoRA(4-bit)。
+3. `训练集样本数`：真正参与参数更新的样本数量。
+4. `评测集样本数`：只用于评估、不参与训练的样本数量。
+5. `epochs`：理论上的完整训练轮数上限。
+6. `max_steps`：训练 step 上限；如果先撞到这个值，会早于完整 epoch 停止。
+7. `learning_rate`：学习率，决定每一步参数更新幅度。
+8. `LoRA(r/alpha/dropout)`：LoRA 的三项核心超参数。
+
+其中 LoRA 参数可以这样理解：
+
+1. `r`：低秩矩阵的秩，越大表示可学习容量更强，但参数与计算也会增加。
+2. `alpha`：LoRA 缩放系数，影响增量更新强度。
+3. `dropout`：LoRA 分支的 dropout，用于减少过拟合风险。
+
+训练指标字段：
+
+1. `train.epoch`：训练结束时等效走到了多少个 epoch；如果小于 1，通常表示先碰到了 `max_steps`。
+2. `train.total_flos`：累计浮点运算量，主要反映训练计算规模。
+3. `train.train_loss`：训练集损失，通常越低越说明模型更贴合训练样本。
+4. `train.train_runtime`：训练总耗时，单位秒。
+5. `train.train_samples_per_second`：训练吞吐，每秒处理多少个样本。
+6. `train.train_steps_per_second`：训练速度，每秒执行多少个 step。
+
+评测指标字段：
+
+1. `eval.epoch`：执行评测时对应的训练进度位置。
+2. `eval.eval_loss`：评测集损失，比训练损失更能反映泛化情况，通常越低越好。
+3. `eval.eval_entropy`：预测分布不确定性的统计量，可辅助判断输出是否过于发散。
+4. `eval.eval_mean_token_accuracy`：token 级平均准确率，可粗略理解为“逐 token 预测的平均命中情况”。
+5. `eval.eval_num_tokens`：评测阶段实际统计到的 token 总数。
+6. `eval.eval_runtime`：评测总耗时，单位秒。
+7. `eval.eval_samples_per_second`：评测吞吐，每秒处理多少条样本。
+8. `eval.eval_steps_per_second`：评测速度，每秒执行多少个评测 step。
+
+实际读报告时，建议优先看这几个量：
+
+1. `train.train_loss`：训练是否正常收敛。
+2. `eval.eval_loss`：泛化是否还正常。
+3. `eval.eval_mean_token_accuracy`：token 级预测质量是否还可以。
+4. `train/eval runtime` 与吞吐指标：当前配置的训练成本是否可接受。
+
+但要注意：Day31 这些指标主要反映“训练过程是否正常”，不等于最终问答效果本身。真正判断微调前后回答质量变化，仍要结合 Day32 的固定评测集对比结果一起看。
+
 ### Day29-Day31 一体化流程图
 
 ```mermaid
@@ -1930,6 +2012,128 @@ python run_day32_sft_before_after_eval.py \
 1. `section_score`：回答是否包含“结论/分析/操作步骤/风险”四个结构。
 2. `keyword_hit_ratio`：回答是否覆盖样本 tags 中的关键字。
 3. `quality`：`0.6 * section_score + 0.4 * keyword_hit_ratio`。
+
+#### Day32 报告字段说明
+
+`experiments/day32_sft_before_after_eval.md` 主要是在回答一个问题：同一批固定题目下，微调模型是否比基础模型更好。
+
+报告头部字段：
+
+1. `生成时间（UTC）`：本次评测报告生成时间，便于区分不同轮实验。
+2. `评测集`：本次使用的固定评测集文件路径。Day32 强调固定评测集，就是为了保证前后对比公平。
+3. `样本数`：本次实际参与评测的样本数量，例如用了前 5 条或前 20 条。
+4. `基础模型`：未挂 LoRA adapter 的原始模型。
+5. `LoRA Adapter`：本次对比使用的微调增量权重路径。
+6. `评分规则`：本次综合分 `quality` 的计算方式，告诉你最终分数是怎么来的。
+
+`## 汇总结果` 字段：
+
+1. `base_avg_quality`：基础模型在全部评测样本上的平均综合分。
+2. `tuned_avg_quality`：微调模型在全部评测样本上的平均综合分。
+3. `delta_quality`：`tuned_avg_quality - base_avg_quality`，如果是正数，说明整体上微调模型更好。
+4. `base_avg_section_score`：基础模型在“结构完整性”这一项上的平均得分。
+5. `tuned_avg_section_score`：微调模型在“结构完整性”这一项上的平均得分。
+6. `base_avg_keyword_hit`：基础模型平均关键词命中率。
+7. `tuned_avg_keyword_hit`：微调模型平均关键词命中率。
+8. `tuned_win_count`：在多少条样本上，微调模型得分高于基础模型。
+9. `draw_count`：在多少条样本上，两者得分相同。
+
+这些汇总字段可以这样理解：
+
+1. `section_score` 更偏“回答格式是否对齐预期结构”。
+2. `keyword_hit` 更偏“回答内容有没有覆盖业务关键词”。
+3. `quality` 是把结构和关键词覆盖综合到一起后的总分。
+
+如果：
+
+1. `tuned_avg_quality > base_avg_quality`
+2. `tuned_win_count` 占比也比较高
+
+那通常可以认为这次 Day31 微调方向是有效的。
+
+`## 样本对比（前 N 条）` 表格字段：
+
+1. `id`：样本唯一标识，通常来自 Day30 生成的数据 id。
+2. `base_score`：基础模型在该样本上的综合分。
+3. `tuned_score`：微调模型在该样本上的综合分。
+4. `delta`：`tuned_score - base_score`。
+
+这个表格的作用不是看整体趋势，而是帮助你定位“哪类题提升了、哪类题没提升、哪类题反而退步了”。
+
+例如：
+
+1. 如果 `delta > 0`，说明这条样本上微调模型优于基础模型。
+2. 如果 `delta = 0`，说明这条样本两者打平。
+3. 如果 `delta < 0`，说明这条样本上微调模型反而退步，需要回头分析数据覆盖或训练设置。
+
+`## 结论建议` 的含义：
+
+1. 如果 `tuned_avg_quality` 持续高于 `base_avg_quality`，说明微调方向大概率正确。
+2. 如果提升主要来自 `section_score`，说明模型更会按你要求的格式回答了。
+3. 如果 `keyword_hit` 提升不明显，说明 Day30 的训练样本还可以继续增强业务词覆盖。
+
+实际看 Day32 报告时，建议优先关注这三件事：
+
+1. 总体有没有提升：看 `delta_quality`。
+2. 提升来自哪里：看 `section_score` 还是 `keyword_hit`。
+3. 提升是否稳定：看 `tuned_win_count` 和逐样本 `delta`。
+
+所以 Day32 的本质不是看训练过程，而是看“微调后的输出结果是否更符合目标场景”。
+
+#### Day31 与 Day32 指标总览表
+
+可以把 Day31 和 Day32 的指标理解成两类完全不同的问题：
+
+1. Day31 回答的是“训练过程是否正常、是否跑通、成本多大”。
+2. Day32 回答的是“微调后的回答效果，是否真的比基础模型更好”。
+
+| 维度 | Day31 典型字段 | 主要回答的问题 | 怎么理解 |
+|---|---|---|---|
+| 训练收敛 | `train.train_loss` | 模型有没有在训练集上学到东西 | 一般越低越好，但不能单独代表最终业务效果 |
+| 泛化表现 | `eval.eval_loss` | 模型在评测集上的损失是否正常 | 一般越低越好，可辅助判断是否过拟合 |
+| token级准确性 | `eval.eval_mean_token_accuracy` | 模型逐 token 预测是否更准确 | 反映语言建模层面的预测质量 |
+| 训练成本 | `train.train_runtime` `train.train_samples_per_second` | 这套训练配置贵不贵、慢不慢 | 用于评估实验成本与可迭代性 |
+| 结构对齐 | `base_avg_section_score` `tuned_avg_section_score` | 微调后是否更会按要求组织回答结构 | 更偏格式、条理、模板遵循 |
+| 关键词覆盖 | `base_avg_keyword_hit` `tuned_avg_keyword_hit` | 微调后是否更贴近业务语义与关键术语 | 更偏内容覆盖质量 |
+| 综合质量 | `base_avg_quality` `tuned_avg_quality` `delta_quality` | 微调整体上有没有带来收益 | 是 Day32 最核心的一组结论指标 |
+| 稳定胜率 | `tuned_win_count` `draw_count` | 提升是偶然个例还是多数样本都提升 | 更适合判断改进是否稳定 |
+
+实战中建议这样看：
+
+1. 先看 Day31：确认训练流程没问题，loss、runtime、throughput 都在合理范围。
+2. 再看 Day32：确认 `tuned_avg_quality` 是否高于 `base_avg_quality`。
+3. 如果 Day32 提升明显，再往下拆：到底是 `section_score` 带来的，还是 `keyword_hit` 带来的。
+4. 如果 Day31 看起来正常，但 Day32 没提升，优先怀疑数据质量、样本覆盖和评分规则，而不是训练脚本本身。
+
+#### Day31-Day32-Day35 实验闭环指标关系图
+
+```mermaid
+flowchart LR
+	A["Day30<br/>train/eval 数据集"] --> B["Day31 训练阶段"]
+	B --> C["train.train_loss<br/>train.train_runtime<br/>train.train_samples_per_second"]
+	B --> D["eval.eval_loss<br/>eval.eval_mean_token_accuracy"]
+	A --> E["Day32 固定评测阶段"]
+	B --> E
+	E --> F["base_avg_quality / tuned_avg_quality"]
+	E --> G["base_avg_section_score / tuned_avg_section_score"]
+	E --> H["base_avg_keyword_hit / tuned_avg_keyword_hit"]
+	E --> I["delta_quality<br/>tuned_win_count<br/>draw_count"]
+	C --> J["Day35 最终实验报告"]
+	D --> J
+	F --> J
+	G --> J
+	H --> J
+	I --> J
+	J --> K["训练是否跑稳"]
+	J --> L["微调是否有效"]
+	J --> M["后续该优化数据 训练 还是评测"]
+```
+
+这张图可以这样读：
+
+1. Day31 主要产出的是训练过程指标，例如 loss、runtime、吞吐和 token 级评测指标。
+2. Day32 主要产出的是效果对比指标，例如质量分、结构分、关键词命中率和胜率。
+3. Day35 则把两边指标汇总成“训练是否稳定 + 微调是否有效 + 下一步优化方向”这三个最终判断。
 
 ### Day32 业务流程图
 
@@ -2223,6 +2427,84 @@ python run_day34_unified_inference_api.py
 2. 支持基础模型与 `adapter_dir` 挂载。
 3. 支持 `fp32` 与 `dynamic_int8` 两种推理模式。
 4. 支持单条或 batch 生成。
+
+#### UnifiedInferenceEngine 是什么，有什么作用
+
+`UnifiedInferenceEngine` 可以理解成一个“统一推理封装器”或“本地推理引擎外壳”。
+
+它的核心作用是把原本分散的几件事收口到同一个类里：
+
+1. 加载基础模型与 tokenizer。
+2. 挂载 LoRA adapter。
+3. 根据 `inference_mode` 切换不同推理路径。
+4. 对外统一暴露 `generate(...)` 接口。
+
+也就是说，调用方不需要每次都手动写：
+
+1. `AutoTokenizer.from_pretrained(...)`
+2. `AutoModelForCausalLM.from_pretrained(...)`
+3. `PeftModel.from_pretrained(...)`
+4. `model.generate(...)`
+
+而是统一变成：
+
+1. 创建 `UnifiedInferenceEngine(...)`
+2. 调 `load()`
+3. 调 `generate(...)`
+
+这也是 Day34 的核心价值：把“模型加载 + adapter 挂载 + 推理模式切换 + 文本生成”统一成一个可复用 API。
+
+它在整个项目中的作用可以理解为：
+
+1. Day34：作为统一推理接口，对外演示如何标准化调用模型。
+2. Day33：作为 benchmark 后端，复用相同推理抽象来比较不同加速策略。
+3. Day35：作为后续实验链路中可继续扩展的基础组件。
+
+如果看类内部职责：
+
+1. `load()`：负责初始化依赖、加载 tokenizer、加载模型、挂载 adapter、应用可选量化。
+2. `generate()`：负责接收 prompts、分 batch 推理、调用 `model.generate(...)`、再把新增 token 解码为文本。
+
+#### `fp32` 和 `dynamic_int8` 是什么，有什么区别
+
+这两个名字代表的是两种不同的推理数值表示/执行模式。
+
+`fp32`：
+
+1. 指 32 位浮点数推理，是最标准、最常见的模型执行方式。
+2. 精度高，行为稳定，通常最适合作为基线模式。
+3. 缺点是内存占用更大，CPU 场景下速度未必最优。
+
+在当前项目里，`fp32` 的角色主要是：
+
+1. Day34 中作为默认推理模式。
+2. Day33 中作为 `base_serial_fp32`、`base_batch_fp32`、`tuned_serial_fp32` 等基线或对照模式。
+
+`dynamic_int8`：
+
+1. 指动态 8 位整数量化推理。
+2. 主要目标是减少内存占用，并在 CPU 场景下尝试提升推理效率。
+3. 代价是可能带来一定精度损失，而且收益依赖具体模型、任务和硬件环境。
+
+在当前代码中，`dynamic_int8` 是通过 PyTorch 动态量化实现的，定位是“Day33 的 CPU 轻量量化实验模式”。
+
+两者的主要区别可以总结为：
+
+1. 数值精度不同：`fp32` 是 32 位浮点，`dynamic_int8` 是 8 位整数量化路径。
+2. 内存占用不同：`fp32` 更大，`dynamic_int8` 通常更省内存。
+3. 速度目标不同：`fp32` 更像标准基线，`dynamic_int8` 更偏 CPU 轻量加速尝试。
+4. 稳定性不同：`fp32` 一般更稳定，`dynamic_int8` 可能有一定精度折损。
+5. 适用范围不同：在当前项目实现里，`dynamic_int8` 只支持 base model，不支持已挂载 adapter 的模型。
+
+所以在 Day33/Day34 里，不应把它们简单理解成“谁绝对更好”，而应该理解成两种不同取舍：
+
+1. `fp32`：更标准、更稳、适合做对照基线。
+2. `dynamic_int8`：更偏轻量化和 CPU 加速实验。
+
+如果用一句话概括：
+
+1. `UnifiedInferenceEngine` 解决的是“怎么统一调用模型推理”。
+2. `fp32` 和 `dynamic_int8` 解决的是“推理时用什么数值模式做执行”。
 
 ### Day34 业务流程图
 

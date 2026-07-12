@@ -1,10 +1,10 @@
 # Day 31 - 小规模 SFT 训练报告（LoRA/QLoRA）
 
-- 生成时间（UTC）：2026-07-09T10:09:19.835766+00:00
+- 生成时间（UTC）：2026-07-11T09:53:39.735114+00:00
 - 基础模型：HuggingFaceTB/SmolLM2-135M-Instruct
 - 训练方式：LoRA
-- 训练集样本数：48
-- 评测集样本数：12
+- 训练集样本数：100
+- 评测集样本数：20
 - epochs：1.0
 - max_steps：20
 - learning_rate：0.0002
@@ -13,23 +13,23 @@
 
 ## 训练指标
 
-- train.epoch: 1.6666666666666665
+- train.epoch: 0.8
 - train.total_flos: 20475728363520.0
-- train.train_loss: 1.9040589332580566
-- train.train_runtime: 415.86
-- train.train_samples_per_second: 0.192
-- train.train_steps_per_second: 0.048
+- train.train_loss: 1.9027347564697266
+- train.train_runtime: 301.8268
+- train.train_samples_per_second: 0.265
+- train.train_steps_per_second: 0.066
 
 ## 评测指标
 
-- eval.epoch: 1.6666666666666665
-- eval.eval_entropy: 1.7933312853177388
-- eval.eval_loss: 1.6894952058792114
-- eval.eval_mean_token_accuracy: 0.6388163616259893
+- eval.epoch: 0.8
+- eval.eval_entropy: 1.7693191051483155
+- eval.eval_loss: 1.659074068069458
+- eval.eval_mean_token_accuracy: 0.6429503947496414
 - eval.eval_num_tokens: 30720.0
-- eval.eval_runtime: 26.3757
-- eval.eval_samples_per_second: 0.455
-- eval.eval_steps_per_second: 0.455
+- eval.eval_runtime: 19.4172
+- eval.eval_samples_per_second: 1.03
+- eval.eval_steps_per_second: 1.03
 
 ## 结果说明
 

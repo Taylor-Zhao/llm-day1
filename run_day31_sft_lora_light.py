@@ -135,6 +135,13 @@ def main() -> None:
     report_path = resolve_project_path(args.report)
     jsonl_path = resolve_project_path(args.jsonl)
 
+    # 这里拿到的还是“原始样本列表”，每条样本本质上是一个 dict：
+    # {
+    #   "instruction": "任务要求",
+    #   "input": "补充上下文，可为空",
+    #   "output": "期望答案"
+    # }
+    # 它们还不是训练器能直接消费的数据结构，后面还要格式化并转成 Dataset。
     train_rows = read_jsonl(train_path)
     eval_rows = read_jsonl(eval_path)
     if not train_rows:
@@ -181,7 +188,25 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(args.model_id, **model_kwargs)
 
+    # train_ds: 训练集 Dataset。
+    # 作用：提供给 SFTTrainer 在训练阶段反复采样，用来更新 LoRA 参数。
+    # 关键点：
+    # 1) 先对每条原始样本调用 format_example(row)
+    # 2) 把 instruction / input / output 拼成一段完整监督文本
+    # 3) 再包装成 {"text": ...} 结构，交给 Dataset.from_list
+    #
+    # 这样做之后，trainer 就能根据 dataset_text_field="text" 取出文本，
+    # 再交给 tokenizer 切 token，最终用于计算语言建模损失。
     train_ds = Dataset.from_list([{"text": format_example(row)} for row in train_rows])
+
+    # eval_ds: 评测集 Dataset。
+    # 作用：提供给 SFTTrainer 在 evaluate 阶段计算评测指标。
+    # 它和 train_ds 的数据格式完全一致，但用途不同：
+    # - train_ds 用来“学习”
+    # - eval_ds 用来“检查学得怎么样”
+    #
+    # eval_ds 不参与梯度更新，因此不会直接改变模型参数。
+    # 它更像考试卷，而 train_ds 更像教材/练习题。
     eval_ds = Dataset.from_list([{"text": format_example(row)} for row in eval_rows])
 
     peft_config = LoraConfig(
@@ -225,8 +250,16 @@ def main() -> None:
     elif "eval_strategy" in ta_params:
         train_args_kwargs["eval_strategy"] = "steps"
 
+    # 这里把一大组训练超参数打包成 SFTConfig，供 SFTTrainer 统一读取。
     training_args = SFTConfig(**train_args_kwargs)
 
+    # SFTTrainer 可以理解成“训练总控器”：
+    # - model: 要微调的基础模型
+    # - processing_class=tokenizer: 负责把 text 转成 token
+    # - train_dataset=train_ds: 训练时喂给模型的样本
+    # - eval_dataset=eval_ds: 评测时用来算指标的样本
+    # - peft_config=peft_config: 指定本次不是全参数训练，而是 LoRA 微调
+    # - args=training_args: 训练批大小、学习率、评测步长等配置
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
@@ -236,12 +269,17 @@ def main() -> None:
         args=training_args,
     )
 
-    # 训练 -> 评测 -> 导出 adapter，形成可复现实验闭环。
+    # 训练阶段会从 train_ds 中不断取样本，经过 tokenizer 编码后送入 model，
+    # 再基于监督文本计算 loss，并仅更新 LoRA adapter 对应参数。
+    # 这一步的返回值 train_result 中通常包含 train_loss、train_runtime 等统计信息。
     train_result = trainer.train()
     train_metrics = dict(train_result.metrics or {})
 
     eval_metrics: Optional[dict[str, Any]] = None
     if len(eval_rows) > 0:
+        # evaluate() 使用的是 eval_ds，而不是 train_ds。
+        # 它的作用是看看模型在“未参与参数更新的评测样本”上表现如何，
+        # 从而避免只看训练集导致的过拟合假象。
         eval_result = trainer.evaluate()
         eval_metrics = dict(eval_result or {})
 
