@@ -2506,6 +2506,23 @@ python run_day34_unified_inference_api.py
 1. `UnifiedInferenceEngine` 解决的是“怎么统一调用模型推理”。
 2. `fp32` 和 `dynamic_int8` 解决的是“推理时用什么数值模式做执行”。
 
+#### Day33-Day34 推理模式对比表
+
+| 模式 | 典型标识 | 是否挂 LoRA adapter | 主要目标 | 典型适用场景 | 主要取舍 |
+|---|---|---|---|---|---|
+| 串行 FP32 | `base_serial_fp32` | 否 | 作为稳定基线 | 单请求、功能验证、对照实验 | 精度稳定但速度未必最优 |
+| 批处理 FP32 | `base_batch_fp32` | 否 | 提升离线批量吞吐 | 离线评测、批量生成 | 吞吐更高，但单条延迟不一定最低 |
+| 动态量化 INT8 | `base_serial_dynamic_int8` | 否（当前实现仅 base） | 降低内存占用，尝试 CPU 加速 | 本地 CPU 轻量实验 | 可能有精度折损，收益依赖模型与硬件 |
+| 并发 FP32 | `base_concurrent_fp32_xN` | 否 | 提升多请求处理能力 | 并行请求、服务压测 | 受线程调度影响，单机不一定线性提速 |
+| 串行 FP32 + LoRA | `tuned_serial_fp32` | 是 | 对比能力增强后的推理成本 | 业务效果验证、上线前对照 | 效果通常更好，但可能带来速度代价 |
+
+读取 Day33 报告时可以按这个顺序：
+
+1. 先看 `base_serial_fp32`，建立速度基线。
+2. 再看 `base_batch_fp32` 与 `base_concurrent_fp32_xN`，判断吞吐优化空间。
+3. 再看 `base_serial_dynamic_int8`，判断量化在当前机器上的收益与代价。
+4. 最后看 `tuned_serial_fp32`，判断“能力增强”是否引入不可接受的延迟成本。
+
 ### Day34 业务流程图
 
 ```mermaid
@@ -2733,3 +2750,268 @@ Day29-Day35 可以整体理解为一条完整的“轻量微调实验链路”�
 
 如果再用一句话概括：
 Day29-Day35 不是单点实验，而是在搭建一个从“概念 -> 数据 -> 训练 -> 评测 -> 推理优化 -> 报告沉淀”的完整微调工程闭环。
+
+## 41) Week 6 启动：Day36-Day38 统一服务层（FastAPI）
+
+目标：用一套统一代码覆盖 Day36-Day38，把“服务化 + 稳定性治理 + 可观测性”一次接好。
+
+### 已落地代码
+
+1. `run_day36_day38_unified_service.py`
+2. `requirements_day36_day38.txt`
+3. `experiments/day36_day38_service_runbook.md`
+
+### 能力映射
+
+Day36（统一服务层）：
+
+1. 使用 FastAPI 提供统一推理接口 `POST /v1/inference`。
+2. 底层复用 Day34 的 `UnifiedInferenceEngine`，避免重复造轮子。
+
+Day37（鉴权、限流、错误码、重试）：
+
+1. 鉴权：请求头 `x-api-key`。
+2. 限流：基于 API Key 的滑动窗口限流（内存实现）。
+3. 错误码：`AUTH_MISSING` `AUTH_INVALID` `RATE_LIMITED` `UPSTREAM_INFERENCE_FAILED` `INTERNAL_ERROR`。
+4. 重试：推理失败时使用指数退避重试。
+
+Day38（日志与监控）：
+
+1. 请求日志：`request_id`、路径、状态码、延迟。
+2. token 监控：`prompt_tokens` 与 `completion_tokens`。
+3. 失败原因监控：按错误码聚合失败次数。
+4. 指标接口：`GET /metrics`。
+
+### Day36-Day38 业务流程图
+
+```mermaid
+flowchart TD
+	A["main / build_app<br/>加载配置与共享状态"] --> B["startup<br/>UnifiedInferenceEngine.load"]
+	B --> C["HTTP 请求进入 /v1/inference"]
+	C --> D["request_middleware<br/>生成 request_id + 计时"]
+	D --> E["require_api_key<br/>鉴权校验"]
+	E --> F["rate_limiter.allow<br/>滑动窗口限流"]
+	F -->|通过| G["build_backend_prompt<br/>构造推理输入"]
+	F -->|限流| H["ApiError RATE_LIMITED(429)"]
+	G --> I["retry loop<br/>engine.generate 单次调用"]
+	I -->|成功| J["count_tokens + metrics.on_tokens"]
+	I -->|失败且可重试| I
+	I -->|失败不可重试| K["ApiError UPSTREAM_INFERENCE_FAILED(502)"]
+	J --> L["返回 GenerateResponse"]
+	H --> M["exception_handler<br/>统一错误响应"]
+	K --> M
+	L --> N["middleware 收尾<br/>记录 latency/success/failure"]
+	M --> N
+	N --> O["/metrics 暴露聚合指标"]
+```
+
+### Day36-Day38 时序图
+
+```mermaid
+sequenceDiagram
+	participant C as Client
+	participant MW as Middleware
+	participant API as /v1/inference
+	participant RL as RateLimiter
+	participant ENG as UnifiedInferenceEngine
+	participant MET as ServiceMetrics
+	participant EH as ExceptionHandler
+
+	C->>MW: HTTP Request + x-api-key
+	MW->>MW: 生成 request_id, 开始计时
+	MW->>API: 转发请求
+	API->>API: require_api_key()
+	API->>RL: allow(api_key)
+	alt 触发限流
+		RL-->>API: blocked
+		API->>EH: raise RATE_LIMITED
+		EH-->>MW: JSON error(429)
+	else 允许请求
+		RL-->>API: allowed
+		API->>API: build_backend_prompt()
+		loop 重试(最多 N 次)
+			API->>ENG: generate(...)
+			alt 成功
+				ENG-->>API: answer
+			else 失败且可重试
+				ENG-->>API: transient error
+				API->>API: backoff + retry
+			else 失败不可重试
+				API->>EH: raise UPSTREAM_INFERENCE_FAILED
+				EH-->>MW: JSON error(502)
+			end
+		end
+		API->>MET: on_tokens(prompt, completion)
+		API-->>MW: JSON success(200)
+	end
+	MW->>MET: on_request(latency, ok/fail, error_code)
+	MW-->>C: Response + x-request-id
+```
+
+### Day36-Day38 函数调用关系图
+
+```mermaid
+flowchart TD
+	A["build_app"] --> B["ServiceConfig.from_env"]
+	A --> C["FastAPI(...)"]
+	A --> D["SlidingWindowRateLimiter(...)" ]
+	A --> E["ServiceMetrics(...)"]
+	A --> F["on_startup"]
+	F --> G["resolve_project_path(adapter_dir)"]
+	F --> H["UnifiedInferenceEngine(...).load()"]
+
+	A --> I["request_middleware"]
+	I --> J["metrics.on_request(...)"]
+
+	A --> K["/v1/inference"]
+	K --> L["require_api_key"]
+	K --> M["rate_limiter.allow"]
+	K --> N["build_backend_prompt"]
+	K --> O["count_tokens(prompt)"]
+	K --> P["run_once -> engine.generate"]
+	P --> Q{"retryable?"}
+	Q -->|yes| R["time.sleep(backoff)"]
+	R --> P
+	Q -->|no| S["raise ApiError(UPSTREAM_INFERENCE_FAILED)"]
+	K --> T["count_tokens(answer)"]
+	K --> U["metrics.on_tokens(...)"]
+	K --> V["GenerateResponse(...)"]
+
+	A --> W["api_error_handler(ApiError)"]
+	W --> X["build_error_payload"]
+	A --> Y["unhandled_error_handler(Exception)"]
+	Y --> X
+
+	A --> Z["/healthz"]
+	A --> AA["/metrics"]
+	AA --> AB["metrics.snapshot()"]
+```
+
+### 快速运行
+
+```bash
+cd /Users/zhaoyonggng/work/llm-day1
+source .venv/bin/activate
+pip install -r requirements_day36_day38.txt
+
+export DAY36_API_KEYS="dev-api-key"
+export DAY36_BASE_MODEL_ID="HuggingFaceTB/SmolLM2-135M-Instruct"
+export DAY36_ADAPTER_DIR="outputs/day31_sft_lora/adapter"
+export DAY36_INFERENCE_MODE="fp32"
+export DAY36_PORT="8070"
+
+export DAY37_RATE_LIMIT_REQUESTS="30"
+export DAY37_RATE_LIMIT_WINDOW_SEC="60"
+export DAY37_RETRY_ATTEMPTS="3"
+export DAY37_RETRY_BACKOFF_MS="200"
+
+python run_day36_day38_unified_service.py
+```
+
+### 调用示例
+
+```bash
+curl -s -X POST "http://127.0.0.1:8070/v1/inference" \
+	-H "Content-Type: application/json" \
+	-H "x-api-key: dev-api-key" \
+	-d '{
+		"instruction": "请给出订单服务接口超时的排查步骤",
+		"user_input": "环境：生产，偶发超时",
+		"max_new_tokens": 180,
+		"temperature": 0.0,
+		"top_p": 1.0
+	}'
+```
+
+### 监控检查
+
+```bash
+curl -s http://127.0.0.1:8070/healthz
+curl -s http://127.0.0.1:8070/metrics
+```
+
+详细步骤见：`experiments/day36_day38_service_runbook.md`
+
+## 42) Day39 - 部署到云端或可公网访问环境
+
+目标：把 Day36-Day38 的统一服务推进到“外部可访问”的部署形态。
+
+已补充产物：
+
+1. `Dockerfile.day39`
+2. `.dockerignore`
+3. `showcase/week6_day39_day41/day39_deployment_runbook.md`
+
+当前给了三条路线：
+
+1. 本地服务 + tunnel（Cloudflare Tunnel / ngrok）快速公网暴露。
+2. Docker 化后部署到云主机。
+3. 走 Railway / Render / Fly.io 等 PaaS 平台。
+
+如果当前目标是先做作品展示和录视频，优先推荐：
+
+1. 本地起服务。
+2. 用 tunnel 暴露公网。
+3. 直接展示 `/healthz`、`/v1/inference`、`/metrics`。
+
+详细说明见：`showcase/week6_day39_day41/day39_deployment_runbook.md`
+
+## 43) Day40 - 录 3-5 分钟项目演示视频
+
+目标：在 3-5 分钟内清楚展示“项目做了什么、为什么有价值、现在能跑到什么程度”。
+
+已补充产物：
+
+1. `showcase/week6_day39_day41/day40_demo_video_script.md`
+
+脚本内容覆盖：
+
+1. 开场介绍。
+2. 项目结构展示。
+3. 服务启动。
+4. 健康检查与接口调用。
+5. 监控展示。
+6. 训练与评测闭环讲解。
+7. 收尾总结。
+
+详细脚本见：`showcase/week6_day39_day41/day40_demo_video_script.md`
+
+## 44) Day41 - 项目亮点与技术决策文档
+
+目标：把项目沉淀成“可讲给面试官听、可写进简历里、可放进作品集里”的表达材料。
+
+已补充产物：
+
+1. `showcase/week6_day39_day41/day41_project_highlights_and_technical_decisions.md`
+
+文档覆盖：
+
+1. 项目亮点。
+2. 技术决策与原因。
+3. 方案取舍与后续演进方向。
+4. 简历表达建议。
+5. 面试可展开的问题。
+
+详细内容见：`showcase/week6_day39_day41/day41_project_highlights_and_technical_decisions.md`
+
+## 45) Day42 - 整理简历与面试题（RAG、Agent、评测、成本优化）
+
+目标：把项目经验沉淀成“可投递 + 可面试 + 可即讲”的实战材料包。
+
+已补充产物：
+
+1. `showcase/week6_day42/day42_resume_bullets.md`
+2. `showcase/week6_day42/day42_interview_question_bank.md`
+3. `showcase/week6_day42/day42_self_intro_90s.md`
+
+内容说明：
+
+1. `day42_resume_bullets.md`：提供后端/算法/全栈三版简历条目模板 + 可量化结果模板。
+2. `day42_interview_question_bank.md`：覆盖 RAG、Agent、评测、成本优化四大方向的高频问答。
+3. `day42_self_intro_90s.md`：提供 90 秒项目自我介绍，可直接口播。
+
+使用建议：
+
+1. 先按目标岗位选择简历条目版本。
+2. 再用题库做 1-2 轮模拟面试。
+3. 最后用 90 秒自我介绍做开场定稿，形成稳定表达。

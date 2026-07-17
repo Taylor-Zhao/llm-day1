@@ -1,0 +1,32 @@
+FROM python:3.9-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY requirements_day29_day31.txt requirements_day29_day31.txt
+COPY requirements_day36_day38.txt requirements_day36_day38.txt
+
+RUN pip install --upgrade pip && \
+    pip install -r requirements_day29_day31.txt && \
+    pip install -r requirements_day36_day38.txt
+
+COPY . .
+
+ENV DAY36_HOST=0.0.0.0 \
+    DAY36_PORT=8070 \
+    DAY36_API_KEYS=dev-api-key \
+    DAY36_BASE_MODEL_ID=HuggingFaceTB/SmolLM2-135M-Instruct \
+    DAY36_ADAPTER_DIR=outputs/day31_sft_lora/adapter \
+    DAY36_INFERENCE_MODE=fp32 \
+    DAY36_LOG_LEVEL=INFO \
+    DAY37_RATE_LIMIT_REQUESTS=30 \
+    DAY37_RATE_LIMIT_WINDOW_SEC=60 \
+    DAY37_RETRY_ATTEMPTS=3 \
+    DAY37_RETRY_BACKOFF_MS=200
+
+EXPOSE 8070
+
+CMD ["python", "run_day36_day38_unified_service.py"]

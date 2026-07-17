@@ -24,6 +24,7 @@ experiments/*
 !experiments/day33_inference_acceleration_report.md
 !experiments/day34_unified_inference_api.md
 !experiments/day35_sft_experiment_report.md
+!experiments/*.md
 !logs/day26_day28_agent_demo.jsonl
 !logs/day26_day28_agent_demo.audit.jsonl
 !logs/day25_day28_langchain_demo.jsonl
