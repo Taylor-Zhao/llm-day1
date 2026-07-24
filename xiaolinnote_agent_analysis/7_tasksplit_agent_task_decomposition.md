@@ -882,13 +882,13 @@ flowchart TD
 | 步骤级重试 | 已实现 | `retry_call()` | 增加 jitter/总预算 |
 | 审计日志 | 已实现 | `append_audit_event()` | 日志脱敏/持久化 |
 | 总结 fallback | 已实现 | `build_fallback_summary()` | 明确降级标记 |
-| 前序输出传入后续步骤 | 未实现 | Executor 只接收当前 step | 增加 state/bindings |
-| 步骤依赖表达 | 未实现 | schema 无 `depends_on` | 扩展 PlanStep |
-| DAG 校验 | 未实现 | 当前普通 list | 增加环检测 |
-| 无依赖步骤并行 | 未实现 | 当前 `for` 串行 | DAG scheduler |
-| 步骤验收标准 | 未实现 | 当前主要检查异常 | acceptance criteria |
+| 前序输出传入后续步骤 | 参考实现已提供 | 原 Executor 只接收当前 step | `resolve_bindings()` |
+| 步骤依赖表达 | 参考实现已提供 | 原 schema 无 `depends_on` | `PlanStep.depends_on` |
+| DAG 校验 | 参考实现已提供 | 原 Demo 使用普通 list | `validate_plan()` |
+| 无依赖步骤并行 | 参考实现已提供 | 原 Demo 使用 `for` 串行 | `DAGOrchestrator` |
+| 步骤验收标准 | 参考实现已提供 | 原 Demo 主要检查异常 | `success_criteria` |
 | 自适应继续拆分 | 未实现 | 失败只重试/记录 | decompose failed step |
-| 条件式 Replan | 未实现 | 计划生成一次后固定 | replan trigger |
+| 条件式 Replan | 参考实现已提供 | 原 Demo 计划生成一次后固定 | `on_failure` + Replanner |
 | 全局 token/时间预算 | 部分实现 | 步数、单次 timeout、重试上限 | ExecutionBudget |
 
 准确的项目描述：
@@ -898,6 +898,8 @@ flowchart TD
 不应夸大为：
 
 > 已支持 DAG、自适应递归拆分和动态重规划的完整调度器。
+
+表中的“参考实现”位于 [agent_capabilities_reference.py](examples/agent_capabilities_reference.py)，测试位于 [test_agent_capabilities_reference.py](../tests/test_agent_capabilities_reference.py)。它具体演示 `${steps.<id>.output.<path>}` 结果绑定、依赖环检测、并行 ready batch、结构化验收、原子 checkpoint 和有上限的计划补丁；自适应递归拆分及全局 token/时间预算仍未实现。
 
 ---
 
@@ -1102,9 +1104,9 @@ flowchart LR
 - [Day25 手写任务编排](../run_day25_task_orchestration.py)
 - [Day26-Day28 重试、审计与 Demo](../run_day26_day28_agent_demo.py)
 - [Day25-Day28 LangChain 版本](../run_day25_day28_langchain_demo.py)
-- [Day25 实验报告](day25_task_orchestration.md)
-- [Day26-Day28 实验报告](day26_day28_agent_demo.md)
-- [LangChain Agent 实验报告](day25_day28_langchain_demo.md)
+- [Day25 实验报告](../experiments/day25_task_orchestration.md)
+- [Day26-Day28 实验报告](../experiments/day26_day28_agent_demo.md)
+- [LangChain Agent 实验报告](../experiments/day25_day28_langchain_demo.md)
 - [Day1-Day42 总结工具书](../Day1_42_学习总结与工具手册.md)
 
 ---
