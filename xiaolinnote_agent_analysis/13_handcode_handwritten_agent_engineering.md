@@ -115,6 +115,101 @@ flowchart TB
     C --> A
 ```
 
+### 4.1 高级能力参考脚本的整体流程
+
+[agent_capabilities_reference.py](examples/agent_capabilities_reference.py) 将记忆、编排、协作和反思放在同一个透明控制面中。各模块通过普通 Python 对象和可注入回调连接，不要求真实 LLM 或网络服务，因此可以分别测试。
+
+```mermaid
+flowchart TD
+    U[用户目标与消息] --> STM[ShortTermMemory]
+    STM --> C{消息是否超出窗口?}
+    C -->|是| CS[摘要旧消息]
+    C -->|否| BC[构建上下文]
+    CS --> BC
+
+    BC --> P[生成或加载 PlanStep 列表]
+    P --> VP[validate_plan 校验 ID、依赖和环]
+    VP --> O[DAGOrchestrator]
+    O --> R[选择依赖已验收的 Ready Steps]
+    R --> RB[resolve_bindings 绑定前序输出]
+    RB --> WR[WorkerRegistry 白名单执行]
+    WR --> SS[(SharedState)]
+    WR --> AC{check_acceptance 验收}
+
+    AC -->|通过| CP[写入 Checkpoint]
+    CP --> D{全部步骤完成?}
+    D -->|否| R
+    D -->|是| RE[ReflectionEngine]
+
+    AC -->|失败且允许 Replan| RP[Replanner 生成未执行步骤补丁]
+    RP --> VP
+    AC -->|失败且不可恢复| F[终止并报告失败]
+
+    RE --> EV{Evaluator 判定通过?}
+    EV -->|否且有预算| IM[Improver 改进输出]
+    IM --> EV
+    EV -->|通过或预算耗尽| OUT[返回最终结果与审计轨迹]
+
+    LMS[(SQLiteMemoryStore)] -. 检索长期事实 .-> BC
+    OUT -. 筛选后写入 .-> LMS
+```
+
+这张图中的虚线表示扩展接入点：参考脚本已经实现长期记忆读写接口，但 `run_demo()` 没有自动执行“任务前检索、任务后筛选写入”，避免把存储能力误称为完整的自动记忆策略。
+
+### 4.2 DAG 执行、验收与 Replan 时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Caller as 调用方
+    participant O as DAGOrchestrator
+    participant S as SharedState
+    participant B as Binding Resolver
+    participant R as WorkerRegistry
+    participant W as Worker
+    participant A as Acceptance Validator
+    participant P as Replanner
+    participant C as Checkpoint
+
+    Caller->>O: run(task_id, goal, plan, replanner)
+    O->>O: validate_plan(plan)
+
+    loop 直到无待执行步骤
+        O->>S: 读取已完成且验收通过的结果
+        O->>O: 选择 ready batch
+
+        par 每个 Ready Step 可并行执行
+            O->>S: append_event(step.started)
+            O->>B: resolve_bindings(step.payload, results)
+            B-->>O: 已解析 payload
+            O->>R: execute(worker, payload, state)
+            R->>W: 调用白名单 Worker
+            W-->>R: output
+            R-->>O: output
+            O->>A: check_acceptance(output, criteria)
+            A-->>O: accepted / failure reason
+        end
+
+        O->>S: save_result() 并追加完成事件
+        O->>C: 原子写入状态快照
+
+        alt 本批次全部验收通过
+            O->>O: 进入下一批 Ready Steps
+        else 失败且 on_failure = replan 且预算充足
+            O->>P: 原计划、共享状态、失败结果
+            P-->>O: 仅包含未执行步骤的计划补丁
+            O->>O: 合并已完成步骤并重新 validate_plan
+            O->>S: append_event(plan.revised)
+        else 失败不可恢复
+            O-->>Caller: 抛出验收或执行错误
+        end
+    end
+
+    O-->>Caller: 返回 SharedState
+```
+
+时序图体现了两个容易混淆的边界：Worker 没有抛异常只代表技术执行成功，仍需 `check_acceptance()` 判断业务结果；Replanner 只能返回尚未执行的新步骤，不能覆盖已有结果或已经发生的外部副作用。
+
 ## 5. 如何选
 
 | 场景 | 更合适的选择 |
