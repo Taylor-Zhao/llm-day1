@@ -20,6 +20,18 @@ Edit `.env` and fill `OPENAI_API_KEY`.
 
 中文注释：如果你使用兼容网关（非官方端点），可同时配置 `OPENAI_BASE_URL`。
 
+## 1.1) Full Env (LangGraph + Airflow)
+
+中文注释：如果你要运行 Airflow 扫描 DAG 或 Airflow+LangGraph 示例，直接安装完整依赖集合。
+
+```bash
+cd /Users/zhaoyonggng/work/llm-day1
+source .venv/bin/activate
+python -m pip install -r requirements_airflow.txt
+```
+
+说明：`requirements_airflow.txt` 已包含 `requirements.txt`，并附带 Airflow 与 LangChain 的兼容版本约束。
+
 ## 2) Run the CLI (15 min)
 
 中文注释：先用默认参数跑通，确认“提问 -> 回复 -> 日志落盘”链路正常。

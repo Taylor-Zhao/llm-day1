@@ -1,0 +1,18 @@
+# Full environment for LangGraph + optional Airflow orchestration (Python 3.9)
+# One-command install:
+#   /Users/zhaoyonggng/work/llm-day1/.venv/bin/python -m pip install -r requirements_airflow.txt
+#
+# Notes:
+# - This file includes base project dependencies from requirements.txt.
+# - It also pins a few packages to keep Airflow and LangChain compatible.
+
+-r requirements.txt
+
+# Airflow orchestration layer
+apache-airflow==2.10.5
+
+# Compatibility pins after adding Airflow
+typing_extensions>=4.14.1
+tenacity>=8.1.0,<9.0.0,!=8.4.0
+async-timeout>=4.0.0,<5.0.0; python_version < "3.11"
+dill==0.4.0

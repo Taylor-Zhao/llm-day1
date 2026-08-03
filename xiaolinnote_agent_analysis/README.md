@@ -85,9 +85,16 @@ flowchart TD
 - [Day25-Day28 LangChain Demo](../run_day25_day28_langchain_demo.py)
 - [高级 Agent 能力参考实现](examples/agent_capabilities_reference.py)
 - [高级能力离线测试](../tests/test_agent_capabilities_reference.py)
+- [LangGraph 版高级能力实现](examples/agent_capabilities_langgraph.py)
+- [LangGraph 版离线测试](../tests/test_agent_capabilities_langgraph.py)
+- [Airflow+LangGraph 版高级能力实现](examples/agent_capabilities_airflow_langgraph.py)
+- [Airflow+LangGraph 版离线测试](../tests/test_agent_capabilities_airflow_langgraph.py)
+- [Airflow 扫描入口 DAG](../dags/agent_capabilities_airflow_langgraph_dag.py)
+- [LangGraph 方法级图解文档](17_agent_capabilities_langgraph_method_guide.md)
+- [Airflow+LangGraph 方法级图解文档](18_agent_capabilities_airflow_langgraph_method_guide.md)
 - [Day1-Day42 总结工具书](../Day1_42_学习总结与工具手册.md)
 
-其中 `run_day*` 文件保留学习过程中的渐进实现和真实能力边界；高级参考实现集中补齐 SQLite 长期记忆、上下文压缩、DAG 调度、结果绑定、步骤验收、Replan、共享状态、混合路由、Handoff 防循环和 Reflection。它采用依赖注入，可在不调用 LLM 和外部服务的情况下测试控制逻辑。
+其中 `run_day*` 文件保留学习过程中的渐进实现和真实能力边界；框架无关参考实现集中补齐 SQLite 长期记忆、上下文压缩、DAG 调度、结果绑定、步骤验收、Replan、共享状态、混合路由、Handoff 防循环和 Reflection。LangGraph 版本复用相同领域对象，并用 `StateGraph`、`Send`、`Command` 和 `MemorySaver` 显式实现并行 DAG、动态路由、循环与 checkpoint。两套实现都通过依赖注入隔离模型和外部服务，可离线测试控制逻辑。
 
 ## 阅读时的统一判断框架
 
