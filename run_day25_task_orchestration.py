@@ -6,13 +6,14 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
 
 from chat_cli import build_client, chat_once, load_system_prompt, normalize_usage, utc_now_iso
+from tooling import LocalToolGateway, ToolDefinition, resolve_gateway
 
 PROJECT_DIR = Path(__file__).resolve().parent
 ALLOWED_HTTP_HOSTS = {"httpbin.org"}
@@ -161,11 +162,45 @@ def http_post(url: str, json_body: Optional[dict[str, Any]] = None) -> dict[str,
     raise RuntimeError("http_post failed")
 
 
-TOOL_IMPLS: dict[str, Callable[..., dict[str, Any]]] = {
-    "list_mock_endpoints": list_mock_endpoints,
-    "http_get": http_get,
-    "http_post": http_post,
-}
+def build_tool_gateway() -> LocalToolGateway:
+    """Build local gateway so planner/executor are decoupled from tool registry."""
+
+    return LocalToolGateway(
+        [
+            ToolDefinition(
+                name="list_mock_endpoints",
+                description="列出可联调的 mock endpoint。",
+                parameters={"type": "object", "properties": {}, "required": []},
+                executor=lambda: list_mock_endpoints(),
+            ),
+            ToolDefinition(
+                name="http_get",
+                description="执行白名单 HTTPS GET 请求。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "params": {"type": "object"},
+                    },
+                    "required": ["url"],
+                },
+                executor=http_get,
+            ),
+            ToolDefinition(
+                name="http_post",
+                description="执行白名单 HTTPS POST 请求。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "json_body": {"type": "object"},
+                    },
+                    "required": ["url"],
+                },
+                executor=http_post,
+            ),
+        ]
+    )
 
 
 def extract_json_payload(text: str) -> str:
@@ -190,13 +225,15 @@ def build_plan(
     model: str,
     planner_prompt: str,
     question: str,
+    tool_names: list[str],
     temperature: float,
     max_tokens: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    tool_names_text = ", ".join(tool_names)
     user_text = (
         "请根据用户目标生成任务编排计划（只输出 JSON）：\n"
         f"用户目标：{question}\n"
-        "可用工具：list_mock_endpoints, http_get, http_post"
+        f"可用工具：{tool_names_text}"
     )
     assistant_text, usage = chat_once(
         client=client,
@@ -221,7 +258,7 @@ def build_plan(
     return plan, usage, assistant_text
 
 
-def execute_step(step: dict[str, Any]) -> dict[str, Any]:
+def execute_step(gateway: LocalToolGateway, step: dict[str, Any]) -> dict[str, Any]:
     tool_name = str(step.get("tool") or "").strip()
     args = step.get("args") or {}
     if not isinstance(args, dict):
@@ -251,29 +288,7 @@ def execute_step(step: dict[str, Any]) -> dict[str, Any]:
                 "json_body": {k: v for k, v in args.items() if k != "url"},
             }
 
-    impl = TOOL_IMPLS.get(tool_name)
-    if impl is None:
-        return {
-            "tool_name": tool_name,
-            "ok": False,
-            "arguments": args,
-            "error": "unknown tool",
-        }
-    try:
-        result = impl(**args)
-        return {
-            "tool_name": tool_name,
-            "ok": True,
-            "arguments": args,
-            "result": result,
-        }
-    except Exception as exc:
-        return {
-            "tool_name": tool_name,
-            "ok": False,
-            "arguments": args,
-            "error": str(exc),
-        }
+    return gateway.call_tool(tool_name, args)
 
 
 def summarize_results(
@@ -430,7 +445,28 @@ def main() -> None:
     args.model = model_name
     api_key, base_url, client = build_client()
 
+    # 第三步：网关选择逻辑（MCP 优先 + 自动降级）。
+    # - local 模式：始终使用本地工具。
+    # - mcp 模式：必须加载 MCP 适配器，失败直接报错。
+    # - auto 模式：优先 MCP，失败回退本地（默认）。
+    local_gateway = build_tool_gateway()
+    gateway_selection = resolve_gateway(local_gateway)
+    gateway = gateway_selection.gateway
+    tool_names = [tool.name for tool in gateway.list_tools()]
+
     usage_totals: dict[str, Optional[int]] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    append_jsonl(
+        jsonl_path,
+        {
+            "timestamp_utc": utc_now_iso(),
+            "phase": "gateway",
+            "mode": gateway_selection.mode,
+            "source": gateway_selection.source,
+            "message": gateway_selection.message,
+            "tool_names": tool_names,
+        },
+    )
 
     plan, plan_usage, raw_plan = build_plan(
         client=client,
@@ -439,6 +475,7 @@ def main() -> None:
         model=model_name,
         planner_prompt=planner_prompt,
         question=args.question,
+        tool_names=tool_names,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
     )
@@ -455,7 +492,7 @@ def main() -> None:
 
     execution_results: list[dict[str, Any]] = []
     for idx, step in enumerate(plan[: args.max_steps], start=1):
-        result = execute_step(step)
+        result = execute_step(gateway, step)
         execution_results.append(result)
         append_jsonl(
             jsonl_path,
@@ -510,6 +547,7 @@ def main() -> None:
     print("Done. Day25 task orchestration generated.")
     print(f"Report => {args.report}")
     print(f"JSONL  => {args.jsonl}")
+    print(f"Gateway => {gateway_selection.mode} ({gateway_selection.source})")
 
 
 if __name__ == "__main__":

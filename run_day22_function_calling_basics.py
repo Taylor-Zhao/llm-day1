@@ -5,12 +5,13 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
 
 from chat_cli import build_client, load_system_prompt, normalize_usage, utc_now_iso
+from tooling import LocalToolGateway, ToolDefinition, build_openai_tool_specs, resolve_gateway
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
@@ -111,58 +112,56 @@ def search_incident_playbook(topic: str) -> dict[str, Any]:
     return {"topic": topic, "found": True, "tips": tips}
 
 
-TOOL_SPECS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "add_numbers",
-            "description": "计算两个数字之和。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "number", "description": "第一个数字"},
-                    "b": {"type": "number", "description": "第二个数字"},
-                },
-                "required": ["a", "b"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lookup_service_owner",
-            "description": "查询某个服务的负责人和值班渠道。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "service": {"type": "string", "description": "服务名，例如 payment、order"},
-                },
-                "required": ["service"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_incident_playbook",
-            "description": "查询指定故障主题的内置处理手册。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "description": "主题，例如 timeout、cache、database"},
-                },
-                "required": ["topic"],
-            },
-        },
-    },
-]
+def build_tool_gateway() -> LocalToolGateway:
+    """Build local gateway so orchestration is decoupled from tool registration."""
 
-
-TOOL_IMPLS: dict[str, Callable[..., dict[str, Any]]] = {
-    "add_numbers": add_numbers,
-    "lookup_service_owner": lookup_service_owner,
-    "search_incident_playbook": search_incident_playbook,
-}
+    return LocalToolGateway(
+        [
+            ToolDefinition(
+                name="add_numbers",
+                description="计算两个数字之和。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "number", "description": "第一个数字"},
+                        "b": {"type": "number", "description": "第二个数字"},
+                    },
+                    "required": ["a", "b"],
+                },
+                executor=add_numbers,
+            ),
+            ToolDefinition(
+                name="lookup_service_owner",
+                description="查询某个服务的负责人和值班渠道。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "service": {
+                            "type": "string",
+                            "description": "服务名，例如 payment、order",
+                        },
+                    },
+                    "required": ["service"],
+                },
+                executor=lookup_service_owner,
+            ),
+            ToolDefinition(
+                name="search_incident_playbook",
+                description="查询指定故障主题的内置处理手册。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "topic": {
+                            "type": "string",
+                            "description": "主题，例如 timeout、cache、database",
+                        },
+                    },
+                    "required": ["topic"],
+                },
+                executor=search_incident_playbook,
+            ),
+        ]
+    )
 
 
 def chat_once_with_tools(
@@ -198,7 +197,10 @@ def chat_once_with_tools(
     return message, normalize_usage(data)
 
 
-def execute_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
+def execute_tool_call(
+    gateway: LocalToolGateway,
+    tool_call: dict[str, Any],
+) -> dict[str, Any]:
     function_obj = tool_call.get("function") or {}
     name = function_obj.get("name") or ""
     raw_args = function_obj.get("arguments") or "{}"
@@ -211,24 +213,7 @@ def execute_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
             "error": f"invalid tool arguments: {exc}",
         }
 
-    impl = TOOL_IMPLS.get(name)
-    if impl is None:
-        return {
-            "tool_name": name,
-            "ok": False,
-            "error": "unknown tool",
-        }
-
-    try:
-        result = impl(**kwargs)
-        return {"tool_name": name, "ok": True, "arguments": kwargs, "result": result}
-    except Exception as exc:
-        return {
-            "tool_name": name,
-            "ok": False,
-            "arguments": kwargs,
-            "error": str(exc),
-        }
+    return gateway.call_tool(name, kwargs)
 
 
 def write_report(
@@ -310,6 +295,32 @@ def main() -> None:
     args.model = model_name
     api_key, base_url, client = build_client()
 
+    # 第三步（MCP + 回退）核心入口：
+    # 1) 先构建本地网关（始终可用）；
+    # 2) 再根据环境变量决定是否切到 MCP 网关；
+    # 3) 如果是 auto 模式且 MCP 不可用，会自动回退 local，不中断脚本。
+    local_gateway = build_tool_gateway()
+    gateway_selection = resolve_gateway(local_gateway)
+    tool_gateway = gateway_selection.gateway
+
+    # 这里的 tool_specs 是 function calling 真正消费的“工具 schema 列表”。
+    # 重点：
+    # - 模型只看到 schema，并不知道背后是 local 还是 MCP；
+    # - 因此后续迁移到 MCP 不需要改对话编排主流程。
+    tool_specs = build_openai_tool_specs(tool_gateway)
+
+    append_jsonl(
+        jsonl_path,
+        {
+            "timestamp_utc": utc_now_iso(),
+            "phase": "gateway",
+            "mode": gateway_selection.mode,
+            "source": gateway_selection.source,
+            "message": gateway_selection.message,
+            "tool_names": [item["function"]["name"] for item in tool_specs],
+        },
+    )
+
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": args.question},
@@ -328,7 +339,7 @@ def main() -> None:
             messages=messages,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
-            tools=TOOL_SPECS,
+            tools=tool_specs,
         )
         add_usage(usage_totals, usage)
 
@@ -359,7 +370,7 @@ def main() -> None:
             append_jsonl(jsonl_path, step)
 
             for item in tool_calls:
-                result_payload = execute_tool_call(item)
+                result_payload = execute_tool_call(tool_gateway, item)
                 tool_name = result_payload.get("tool_name") or "unknown"
                 messages.append(
                     {
@@ -405,6 +416,7 @@ def main() -> None:
     print("Done. Day22 function calling demo generated.")
     print(f"Report => {args.report}")
     print(f"JSONL  => {args.jsonl}")
+    print(f"Gateway => {gateway_selection.mode} ({gateway_selection.source})")
 
 
 if __name__ == "__main__":

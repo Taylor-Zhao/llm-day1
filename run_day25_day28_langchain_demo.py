@@ -40,6 +40,7 @@ from langchain_core.callbacks.base import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from tooling import LocalToolGateway, ToolDefinition, resolve_gateway
 
 PROJECT_DIR = Path(__file__).resolve().parent
 ALLOWED_HTTP_HOSTS = {"httpbin.org"}
@@ -208,7 +209,87 @@ def http_post(url: str, json_body: Optional[Dict[str, Any]] = None) -> str:
 
 
 TOOLS = [list_mock_endpoints, http_get, http_post]
-TOOL_MAP = {tool.name: tool for tool in TOOLS}
+
+
+def _gateway_list_mock_endpoints() -> dict[str, Any]:
+    return {"endpoints": MOCK_ENDPOINTS}
+
+
+def _gateway_http_get(url: str, params: Optional[Dict[str, Any]] = None) -> dict[str, Any]:
+    ensure_allowed_url(url)
+    with httpx.Client(timeout=CURRENT_HTTP_TIMEOUT) as client:
+        resp = client.get(url, params=params or {})
+        content_type = resp.headers.get("content-type", "")
+        try:
+            body_obj = resp.json()
+            body_text = json.dumps(body_obj, ensure_ascii=False)
+        except Exception:
+            body_text = resp.text
+        return {
+            "url": str(resp.url),
+            "status_code": resp.status_code,
+            "content_type": content_type,
+            "body": trim_text(body_text),
+        }
+
+
+def _gateway_http_post(url: str, json_body: Optional[Dict[str, Any]] = None) -> dict[str, Any]:
+    ensure_allowed_url(url)
+    with httpx.Client(timeout=CURRENT_HTTP_TIMEOUT) as client:
+        resp = client.post(url, json=json_body or {})
+        content_type = resp.headers.get("content-type", "")
+        try:
+            body_obj = resp.json()
+            body_text = json.dumps(body_obj, ensure_ascii=False)
+        except Exception:
+            body_text = resp.text
+        return {
+            "url": str(resp.url),
+            "status_code": resp.status_code,
+            "content_type": content_type,
+            "body": trim_text(body_text),
+        }
+
+
+def build_tool_gateway() -> LocalToolGateway:
+    """Build local gateway; later this can be swapped with an MCP gateway."""
+
+    return LocalToolGateway(
+        [
+            ToolDefinition(
+                name="list_mock_endpoints",
+                description="列出可联调的 mock endpoint。",
+                parameters={"type": "object", "properties": {}, "required": []},
+                executor=lambda: _gateway_list_mock_endpoints(),
+            ),
+            ToolDefinition(
+                name="http_get",
+                description="执行白名单 HTTPS GET 请求。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "params": {"type": "object"},
+                    },
+                    "required": ["url"],
+                },
+                executor=_gateway_http_get,
+            ),
+            ToolDefinition(
+                name="http_post",
+                description="执行白名单 HTTPS POST 请求。",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "json_body": {"type": "object"},
+                    },
+                    "required": ["url"],
+                },
+                executor=_gateway_http_post,
+            ),
+        ]
+    )
 
 
 class AuditCallbackHandler(BaseCallbackHandler):
@@ -395,21 +476,45 @@ def build_plan(llm: ChatOpenAI, prompt_path: Path, question: str, trace_id: str,
         return build_default_plan(question), "fallback"
 
 
-def execute_step(step: PlanStep, trace_id: str, audit_path: Path, max_attempts: int, backoff_seconds: float) -> dict:
+def execute_step(
+    gateway: LocalToolGateway,
+    step: PlanStep,
+    trace_id: str,
+    audit_path: Path,
+    max_attempts: int,
+    backoff_seconds: float,
+) -> dict:
     # LangChain 的 Agent 思想在这里体现得很清楚：
     # 模型决定“调用哪个工具”，脚本决定“如何安全执行工具”。
-    tool = TOOL_MAP.get(step.tool)
     args = normalize_step_args(step)
-    if tool is None:
-        return {"tool_name": step.tool, "ok": False, "arguments": args, "error": "unknown tool"}
 
-    def _invoke() -> str:
-        return tool.invoke(args, config={"callbacks": [AuditCallbackHandler(audit_path, trace_id)]})
+    def _invoke() -> dict[str, Any]:
+        return gateway.call_tool(step.tool, args)
 
     try:
-        result_text = retry_call(f"tool:{step.tool}", trace_id, audit_path, max_attempts, backoff_seconds, _invoke)
-        return {"tool_name": step.tool, "ok": True, "arguments": args, "result": result_text}
+        gateway_source = type(gateway).__name__
+        append_audit_event(audit_path, trace_id, "tool", "tool_call_started", tool_name=step.tool, source=gateway_source)
+        result_payload = retry_call(f"tool:{step.tool}", trace_id, audit_path, max_attempts, backoff_seconds, _invoke)
+        append_audit_event(
+            audit_path,
+            trace_id,
+            "tool",
+            "tool_call_completed",
+            tool_name=step.tool,
+            ok=bool(result_payload.get("ok")),
+            source=gateway_source,
+        )
+        return result_payload
     except Exception as exc:
+        append_audit_event(
+            audit_path,
+            trace_id,
+            "tool",
+            "tool_call_failed",
+            tool_name=step.tool,
+            error=str(exc),
+            source=type(gateway).__name__,
+        )
         return {"tool_name": step.tool, "ok": False, "arguments": args, "error": str(exc)}
 
 
@@ -558,14 +663,33 @@ def main() -> None:
     )
 
     trace_id = uuid.uuid4().hex[:12]
+
+    # 第三步接入：使用“可替换工具网关”。
+    # 你后续把 LocalToolGateway 换成 McpToolGateway 时，
+    # execute_step / summarize / report 这些业务流程代码不需要改。
+    local_gateway = build_tool_gateway()
+    gateway_selection = resolve_gateway(local_gateway)
+    gateway = gateway_selection.gateway
+
     append_audit_event(audit_path, trace_id, "run", "run_started", question=args.question, model=model_name, timeout_seconds=CURRENT_HTTP_TIMEOUT)
+    append_audit_event(
+        audit_path,
+        trace_id,
+        "gateway",
+        "gateway_selected",
+        mode=gateway_selection.mode,
+        source=gateway_selection.source,
+        message=gateway_selection.message,
+        gateway_class=type(gateway).__name__,
+        tool_names=[tool.name for tool in gateway.list_tools()],
+    )
 
     plan, plan_source = build_plan(llm, prompt_path, args.question, trace_id, audit_path, args.max_attempts, args.retry_backoff_seconds)
     append_jsonl(jsonl_path, {"timestamp_utc": utc_now_iso(), "trace_id": trace_id, "phase": "analysis", "plan": plan.model_dump()})
 
     execution_results: List[dict] = []
     for idx, step in enumerate(plan.plan[: args.max_steps], start=1):
-        result = execute_step(step, trace_id, audit_path, args.max_attempts, args.retry_backoff_seconds)
+        result = execute_step(gateway, step, trace_id, audit_path, args.max_attempts, args.retry_backoff_seconds)
         result["attempts"] = int(result.get("attempts") or 1)
         execution_results.append(result)
         append_jsonl(jsonl_path, {"timestamp_utc": utc_now_iso(), "trace_id": trace_id, "phase": "tool_execution", "step_index": idx, "step": step.model_dump(), "result": result})
@@ -581,6 +705,7 @@ def main() -> None:
     print(f"Report => {args.report}")
     print(f"JSONL  => {args.jsonl}")
     print(f"Audit  => {args.audit}")
+    print(f"Gateway => {gateway_selection.mode} ({gateway_selection.source})")
 
 
 if __name__ == "__main__":
