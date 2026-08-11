@@ -54,11 +54,104 @@ Day8-Day21 属于逐步增强的 Advanced RAG：改写、混合召回、重排�
 - 问题需要动态分解且价值覆盖额外成本时才上 Agentic RAG。
 - Self-RAG 需要模型和训练条件，不应只因名字先进而选择。
 
-## 5. 风险与治理
+## 5. 参考实现方法粒度业务流程图（Mermaid）
+
+下面是 [examples/rag_capabilities_reference.py](examples/rag_capabilities_reference.py) 的方法粒度业务主流程，聚焦脚本内关键能力的调用链与分支决策。
+
+```mermaid
+flowchart TD
+    A[run_demo] --> B[build_parent_child_index]
+    B --> B1[semantic_chunks]
+    B --> B2[split_sentences]
+    B1 --> B3[create parent and child chunks]
+    B3 --> B4[ParentChildIndex.expand]
+
+    A --> C[BM25Index.search]
+    C --> C1[tokenize]
+    C --> C2[compute document frequencies]
+    C --> C3[compute BM25 score]
+    C --> C4[sort and keep top_k]
+
+    D[CorrectiveRAG.retrieve] --> D1[local_retriever]
+    D --> D2[retrieval_gate]
+    D2 -->|high score| D3[return local chunks]
+    D2 -->|middle score| D4[merge local and fallback]
+    D2 -->|low score| D5[return fallback chunks]
+
+    E[run_agentic_rag] --> E1[check max iterations]
+    E1 --> E2[dedupe query]
+    E2 --> E3[retriever]
+    E3 --> E4[accumulate chunks]
+    E4 --> E5[planner]
+    E5 -->|new query| E2
+    E5 -->|stop or done| E6[return AgenticRAGResult]
+
+    F[KnowledgeGraph.traverse] --> F1[build adjacency]
+    F1 --> F2[queue BFS walk]
+    F2 --> F3[filter by relation]
+    F3 --> F4[collect edges and targets]
+    F4 --> F5[return bounded graph path]
+```
+
+## 6. 参考实现方法粒度时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Demo as run_demo
+    participant Build as build_parent_child_index
+    participant Split as split_sentences
+    participant Sem as semantic_chunks
+    participant BM25 as BM25Index.search
+    participant Expand as ParentChildIndex.expand
+    participant CRAG as CorrectiveRAG.retrieve
+    participant Gate as retrieval_gate
+    participant Agent as run_agentic_rag
+    participant Planner as planner
+    participant Retriever as retriever
+
+    User->>Demo: run_demo()
+    Demo->>Build: build parent child index
+    Build->>Split: split text into sentences
+    Split-->>Build: sentence list
+    Build->>Sem: pack sentences into parent and child chunks
+    Sem-->>Build: chunk list
+    Build-->>Demo: ParentChildIndex
+
+    Demo->>BM25: search for query
+    BM25->>BM25: tokenize and score chunks
+    BM25-->>Demo: ranked hits
+    Demo->>Expand: expand child ids into parent blocks
+    Expand-->>Demo: recovered parent context
+
+    Demo->>CRAG: retrieve(query)
+    CRAG->>Gate: evaluate local scores
+    Gate-->>CRAG: LOCAL or MIXED or FALLBACK
+
+    alt LOCAL
+        CRAG-->>Demo: local chunks only
+    else MIXED
+        CRAG->>CRAG: fuse local and fallback rankings
+        CRAG-->>Demo: merged chunk list
+    else FALLBACK
+        CRAG-->>Demo: fallback chunks only
+    end
+
+    User->>Agent: run_agentic_rag(initial_query)
+    Agent->>Retriever: retrieve with current query
+    Retriever-->>Agent: chunk set
+    Agent->>Planner: decide next query or stop
+    Planner-->>Agent: next query or finish signal
+    Agent->>Agent: dedupe query and cap iterations
+    Agent-->>User: AgenticRAGResult
+```
+
+## 7. 风险与治理
 
 动态流程增加不可预测成本。应限制最大检索轮数、每轮候选、总 token、外部域名、超时和重复 Query。任何 fallback 都必须带来源标签，避免把外部网络内容伪装成内部权威知识。
 
-## 6. 模拟面试
+## 8. 模拟面试
 
 **Q1：Self-RAG 和普通 LLM 自检有什么区别？**  
 A：论文 Self-RAG 训练了特殊 reflection token 和决策行为，普通 Prompt 模拟没有同等训练保证。

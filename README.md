@@ -124,6 +124,46 @@ Generated files:
 - `experiments/day1_run_results.md` (readable report)
 - `logs/day1_experiments.jsonl` (raw records)
 
+### Day1 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载 .env / 构建客户端] --> B[parse_args\n读取固定问题与参数]
+	B --> C[runs\n定义 3 组实验配置]
+	C --> D[for run in runs\n读取 system prompt]
+	D --> E[chat_once\n调用模型生成回答]
+	E --> F[append_jsonl\n落盘原始 JSONL 结果]
+	F --> G[results.append\n收集每次实验记录]
+	G --> H{是否遍历完 3 组}
+	H -->|否| D
+	H -->|是| I[write_report\n生成 Markdown 对比报告]
+	I --> J[打印 Done / 输出路径]
+```
+
+### Day1 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户/脚本
+	participant M as main()
+	participant C as build_client()
+	participant L as chat_once()
+	participant FS as append_jsonl()/write_report()
+
+	U->>M: python run_day1_experiments.py
+	M->>M: load_dotenv() + parse_args()
+	M->>C: 构建 OpenAI 兼容客户端
+	C-->>M: api_key, base_url, client
+	loop 3 组实验
+		M->>M: 读取 system prompt
+		M->>L: 发送问题 + temperature + max_tokens
+		L-->>M: assistant + usage
+		M->>FS: append_jsonl() 写入日志
+	end
+	M->>FS: write_report() 生成对比文档
+	FS-->>U: 完整实验结果与说明
+```
+
 ## 8) Day 2 - Parameter Sweep
 
 Day 2 focuses on one thing: compare how `temperature` and `max_tokens` change output quality, length, and latency.
@@ -151,6 +191,42 @@ What to observe:
 1. Lower `temperature` usually makes answers more stable.
 2. Higher `temperature` usually makes answers more diverse but easier to drift.
 3. Larger `max_tokens` may improve completeness, but may also increase noise and latency.
+
+### Day2 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载环境与解析参数] --> B[parse_float_list / parse_int_list\n解析 temperature 与 max_tokens 列表]
+	B --> C[生成参数组合]
+	C --> D[chat_once\n逐组合调用模型]
+	D --> E[记录回答、token 与耗时]
+	E --> F[append_jsonl\n写入原始日志]
+	F --> G{是否还有参数组合}
+	G -->|是| D
+	G -->|否| H[write_csv + write_report\n输出汇总报告]
+```
+
+### Day2 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户/脚本
+	participant M as main()
+	participant P as 参数解析函数
+	participant L as chat_once()
+	participant F as 文件输出
+
+	U->>M: 运行参数 sweep
+	M->>P: parse_float_list() / parse_int_list()
+	P-->>M: 参数组合
+	loop 每个 temperature + max_tokens
+		M->>L: 发送固定问题与实验参数
+		L-->>M: assistant + usage
+		M->>F: append_jsonl() 写入单次结果
+	end
+	M->>F: write_csv() + write_report()
+	F-->>U: 参数对比报告
+```
 
 ## 9) Day 2 Notes - What `temperature` and `max_tokens` mean
 
@@ -240,6 +316,37 @@ Generated files:
 - `experiments/day3_backend_assistant.md` (readable report)
 - `logs/day3_backend_assistant.jsonl` (raw records)
 
+### Day3 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析 mode 与输入路径] --> B[load_text\n读取日志或代码]
+	B --> C[build_system_prompt\n按模式选择系统提示词]
+	C --> D[build_user_text\n拼接任务与输入内容]
+	D --> E[chat_once\n调用模型分析]
+	E --> F[append_jsonl\n记录原始结果]
+	F --> G[write_report\n生成分析报告]
+```
+
+### Day3 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant M as main()
+	participant FS as 文件系统
+	participant L as chat_once()
+
+	U->>M: 选择 log-analysis 或 code-explain
+	M->>FS: load_text(input-file)
+	FS-->>M: 输入文本
+	M->>M: build_system_prompt() + build_user_text()
+	M->>L: 发送分析请求
+	L-->>M: assistant + usage
+	M->>FS: append_jsonl() + write_report()
+	FS-->>U: 分析报告
+```
+
 ## 11) Day 4 - Regression Eval (Prompt + Quality Gate)
 
 Day 4 goal: build a lightweight regression benchmark for backend Q&A quality.
@@ -263,6 +370,41 @@ Generated files:
 - `experiments/day4_regression_eval.md` (readable report)
 - `experiments/day4_regression_eval.csv` (summary table)
 - `logs/day4_regression_eval.jsonl` (raw records)
+
+### Day4 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载 cases 与模型列表] --> B[load_cases\n读取评测样本]
+	B --> C[调用模型生成答案]
+	C --> D[section_score + keyword_score\n检查模板与关键词]
+	D --> E[失败样本重试或记录]
+	E --> F[write_csv\n写入逐样本结果]
+	F --> G[write_report\n计算 pass_rate 与质量门禁]
+```
+
+### Day4 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant FS as 文件系统
+	participant L as Chat模型
+	participant S as 评分函数
+	participant R as 报告输出
+
+	M->>FS: load_cases()
+	FS-->>M: cases
+	loop 每个模型与 case
+		M->>L: 发送评测问题
+		L-->>M: answer
+		M->>S: section_score() + keyword_score()
+		S-->>M: 通过状态与缺失项
+		M->>FS: append_jsonl()
+	end
+	M->>R: write_csv() + write_report()
+	R-->>M: pass_rate / gate result
+```
 
 What to observe:
 1. Section compliance: whether output follows required backend incident template.
@@ -305,6 +447,36 @@ Generated files:
 - `experiments/day5_api_doc_draft.md` (generated API doc draft)
 - `logs/day5_api_doc_generator.jsonl` (run metadata)
 
+### Day5 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析输入与模型参数] --> B[load_text\n读取函数签名]
+	B --> C[构造 API 文档提示词]
+	C --> D[chat_once\n生成 API 文档草稿]
+	D --> E[append_jsonl\n记录运行元数据]
+	E --> F[write_markdown\n写入 Markdown 文档]
+```
+
+### Day5 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant M as main()
+	participant FS as 文件系统
+	participant L as Chat模型
+
+	U->>M: 运行 API 文档生成器
+	M->>FS: load_text(function-signatures)
+	FS-->>M: 签名文本
+	M->>L: 发送文档生成提示词
+	L-->>M: assistant 文档草稿
+	M->>FS: append_jsonl() 记录元数据
+	M->>FS: write_markdown() 保存文档
+	FS-->>U: API 文档草稿
+```
+
 What to observe:
 1. Whether each API includes method/path/params/response/error codes.
 2. Whether uncertain fields are listed under "待确认信息" instead of being guessed.
@@ -339,6 +511,46 @@ What to observe:
 2. Whether schema validation passes at attempt 1.
 3. If retry was triggered, whether the second/third attempt fixed validation errors.
 
+### Day6 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n读取输入与重试参数] --> B[load_text\n读取事件日志]
+	B --> C[chat_once\n请求严格 JSON]
+	C --> D[extract_json_payload\n提取 JSON 内容]
+	D --> E[validate_output\n校验字段与类型]
+	E -->|通过| F[保存最终 JSON]
+	E -->|失败且未达上限| C
+	E -->|失败且达到上限| G[输出失败报告]
+	F --> H[append_jsonl + write_report]
+	G --> H
+```
+
+### Day6 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant L as Chat模型
+	participant V as validate_output()
+	participant FS as 文件系统
+
+	M->>FS: load_text(input-file)
+	loop 最多 max-attempts 次
+		M->>L: 请求结构化 JSON
+		L-->>M: 原始文本
+		M->>M: extract_json_payload()
+		M->>V: validate_output(data)
+		V-->>M: errors 或 valid
+		alt valid
+			M->>FS: 写入最终 JSON
+		else invalid
+			M->>FS: append_jsonl() 记录本次失败
+		end
+	end
+	M->>FS: write_report()
+```
+
 ## 14) Day 7 - 周总结与展示包整理
 
 Day 7 goal: prepare a shareable Week 1 demo package with summary + sample inputs/outputs.
@@ -356,6 +568,32 @@ cd /Users/zhaoyonggng/work/llm-day1
 source .venv/bin/activate
 python run_day5_api_doc_generator.py --input-file inputs/day5_function_signatures.txt
 python run_day6_json_output_control.py --input-file inputs/day6_sample_incident.log --max-attempts 3
+```
+
+### Day7 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[整理 Day1-Day6 产物] --> B[生成 weekly_summary]
+	B --> C[准备 demo README]
+	C --> D[复制 sample inputs]
+	D --> E[整理 sample outputs]
+	E --> F[形成 showcase/week1_demo]
+```
+
+### Day7 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant O as Week1 产物
+	participant S as 周总结整理
+	participant D as Demo 包
+	participant U as 使用者
+
+	O->>S: 汇总实验结果与学习结论
+	S->>D: 写入 weekly_summary 与 README
+	S->>D: 收集 inputs/ 与 outputs/
+	D-->>U: 可运行、可分享的 Week1 demo
 ```
 
 ## 15) Day 8 - Embedding 原理 + 文本切分实验
@@ -423,6 +661,51 @@ What to observe:
 2. Redundancy ratio: overlap too high may duplicate too much context.
 3. Cohesion score: adjacent chunks should still keep semantic continuity.
 
+### Day8 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析参数与语料路径] --> B[load_text\n读取 corpus 文本]
+	B --> C[tokenize_words\n按中文/英文词法切分]
+	C --> D[build_chunks\n按 chunk_size + overlap 生成块]
+	D --> E[chunk_lengths + chunk_redundancy_ratio\n计算长度与冗余]
+	E --> F{enable_embedding_probe}
+	F -->|是| G[build_embedding_client\n准备 embedding 客户端]
+	G --> H[embedding_vector\n向量化相邻 chunk]
+	H --> I[cosine_dense\n计算相似度]
+	I --> J[write_csv + write_report\n导出实验汇总]
+	F -->|否| J
+	J --> K[append_jsonl\n保存明细日志]
+```
+
+### Day8 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant Main as main()
+	participant FS as 文件系统
+	participant T as tokenize_words()
+	participant C as build_chunks()
+	participant M as metrics
+	participant E as embedding_vector()
+	participant R as write_report()/write_csv()
+
+	Main->>FS: load_text(input-file)
+	FS-->>Main: raw corpus text
+	Main->>T: 切分文本为 token 列表
+	T-->>Main: tokens
+	Main->>C: 按 chunk_size / overlap 切块
+	C-->>Main: chunks
+	Main->>M: 计算长度、冗余、词汇内聚度
+	M-->>Main: metrics summary
+	alt enable_embedding_probe
+		Main->>E: 计算相邻 chunk 的 embedding cosine
+		E-->>Main: 相似度结果
+	end
+	Main->>R: 输出 CSV/Markdown/JSONL
+	R-->>Main: 报告文件 ready
+```
+
 ## 16) Day 9 - 搭建本地向量检索（FAISS）
 
 Day 9 goal: build a local FAISS index and run semantic retrieval on your backend notes corpus.
@@ -461,6 +744,49 @@ What to observe:
 1. Top-k results are semantically relevant (not only keyword matching).
 2. Different chunk_size/overlap settings change retrieval ranking quality.
 3. This is the base for Day10 QA (retrieve first, then answer).
+
+### Day9 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析语料、查询与索引参数] --> B[load corpus\n读取文本]
+	B --> C[chunk_text\n切分文本块]
+	C --> D[embedding chunks\n生成向量]
+	D --> E[l2_normalize\n归一化向量]
+	E --> F[FAISS index.add\n建立内积索引]
+	F --> G[read_queries\n读取查询]
+	G --> H[query embedding + search\n召回 top-k]
+	H --> I[append_jsonl\n记录命中结果]
+	I --> J[write_report\n生成检索报告]
+```
+
+### Day9 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant FS as 文件系统
+	participant E as Embedding服务
+	participant F as FAISS
+
+	M->>FS: 读取 corpus 与 queries
+	FS-->>M: 文本与查询列表
+	M->>M: chunk_text() 生成 chunks
+	loop 每个 chunk
+		M->>E: 请求 embedding
+		E-->>M: 向量
+	end
+	M->>M: l2_normalize()
+	M->>F: 建立索引并 add 向量
+	loop 每个 query
+		M->>E: 请求 query embedding
+		E-->>M: query vector
+		M->>F: search(top-k)
+		F-->>M: scores + ids
+		M->>FS: append_jsonl()
+	end
+	M->>FS: write_report()
+```
 
 ## 17) Day 10 - 知识库问答 V1（仅召回，不重排）
 
@@ -608,6 +934,48 @@ What to observe:
 3. 引用内容是否是对应 chunk 的原文连续子串。
 4. 若首次不合规，重试是否修复输出格式。
 
+### Day11 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载语料与评测查询] --> B[chunk_text\n切分知识库]
+	B --> C[retrieve_hits\n向量召回候选]
+	C --> D[build_user_text\n构造带上下文问题]
+	D --> E[answer_with_retry\n生成带引用答案]
+	E --> F[parse_citations\n解析引用]
+	F --> G[validate_answer_with_citations\n校验引用可追溯性]
+	G -->|失败| E
+	G -->|通过| H[append_jsonl + write_report]
+```
+
+### Day11 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant E as Embedding/FAISS
+	participant L as Chat模型
+	participant V as 引用校验
+	participant FS as 文件系统
+
+	M->>M: chunk_text() 构建知识库块
+	loop 每个 query
+		M->>E: retrieve_hits(query)
+		E-->>M: hits
+		M->>M: build_user_text(query, hits)
+		M->>L: answer_with_retry()
+		L-->>M: answer
+		M->>V: parse_citations() + validate_answer_with_citations()
+		alt 校验失败
+			V-->>M: error，触发重试
+		else 校验通过
+			V-->>M: citations valid
+		end
+		M->>FS: append_jsonl()
+	end
+	M->>FS: write_report()
+```
+
 ## 19) Day 12 - 优化切分策略（chunk size、overlap）
 
 Day 12 goal: grid-search chunking parameters and recommend better chunk size / overlap settings.
@@ -642,6 +1010,39 @@ What to observe:
 2. `info_insufficient_rate` 是否随 chunk 策略变化而下降。
 3. `avg_total_tokens` 与 `redundancy_ratio` 是否过高，避免成本失控。
 4. 比较“质量优先”和“成本优先”推荐是否一致。
+
+### Day12 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析 chunk sizes 与 overlaps] --> B[生成参数网格]
+	B --> C[chunk_text\n按组合切分语料]
+	C --> D[执行检索与引用问答评测]
+	D --> E[score_quality\n计算质量得分]
+	E --> F[score_cost\n计算成本得分]
+	F --> G[choose_recommendations\n选择质量优先/成本优先]
+	G --> H[write_csv + write_report]
+```
+
+### Day12 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant R as RAG评测链路
+	participant S as score_quality()/score_cost()
+	participant O as 输出文件
+
+	M->>M: parse_args() + 生成参数组合
+	loop 每个 chunk_size + overlap
+		M->>R: chunk_text() + 检索 + QA
+		R-->>M: 单组合 metrics
+		M->>S: 计算质量与成本排序键
+		S-->>M: scores
+	end
+	M->>M: choose_recommendations()
+	M->>O: write_csv() + write_report()
+```
 
 ## 20) Day 13 - 加入重排（Reranker）并对比效果
 
@@ -681,6 +1082,44 @@ What to observe:
 2. 重排后 `info_insufficient_rate` 是否下降。
 3. `avg_attempt_count` 与 `avg_total_tokens` 是否可接受。
 4. 每个 query 的 top-k chunk_id 是否发生有意义变化。
+
+### Day13 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载语料与查询] --> B[chunk_text\n切分文本]
+	B --> C[向量召回 candidate-top-n]
+	C --> D{模式分支}
+	D -->|baseline| E[直接截取 top-k]
+	D -->|rerank| F[lexical_overlap + rerank_hits\n重新排序]
+	E --> G[执行引用问答与校验]
+	F --> G
+	G --> H[compute_mode_metrics\n汇总两种模式]
+	H --> I[write_csv + write_report]
+```
+
+### Day13 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant R as 召回模块
+	participant RR as rerank_hits()
+	participant Q as 问答与引用校验
+	participant O as 报告输出
+
+	M->>R: 获取 candidate hits
+	R-->>M: candidates
+	alt baseline
+		M->>M: 直接取 top-k
+	else rerank
+		M->>RR: 计算语义、词重叠、名次先验
+		RR-->>M: reranked hits
+	end
+	M->>Q: 生成答案并校验引用
+	Q-->>M: 单 query 结果
+	M->>O: compute_mode_metrics() + write_report()
+```
 
 ## 21) Day 14 - RAG V1 演示版（可回答熟悉的后端文档）
 
@@ -733,6 +1172,45 @@ What to observe:
 2. 开启重排后，top-k 片段是否更贴合问题。
 3. 对熟悉的后端问题，回答是否更稳定、可执行。
 
+### Day14 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析 query 或 REPL 参数] --> B[读取 corpus]
+	B --> C[chunk_text\n构建文本块]
+	C --> D[构建 embedding 索引]
+	D --> E[ask_once\n处理单个问题]
+	E --> F[choose_hits\n可选 rerank 后取 top-k]
+	F --> G[生成带引用回答]
+	G --> H[append_jsonl\n记录问答明细]
+	H --> I{REPL 是否继续}
+	I -->|是| E
+	I -->|否| J[write_report\n输出演示报告]
+```
+
+### Day14 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户
+	participant M as main()
+	participant A as ask_once()
+	participant F as FAISS/Embedding
+	participant L as Chat模型
+	participant FS as 文件系统
+
+	U->>M: 输入 query 或启动 REPL
+	M->>M: 构建 chunks 与向量索引
+	M->>A: ask_once(query)
+	A->>F: 召回候选并执行 choose_hits()
+	F-->>A: top-k context
+	A->>L: 发送问题 + 引用上下文
+	L-->>A: answer + citations
+	A->>FS: append_jsonl()
+	A-->>U: 返回可追溯答案
+	M->>FS: write_report()
+```
+
 Technical Mermaid diagrams:
 - `experiments/day8_day14_technical_mermaid.md` (Day8-Day14 技术细节版流程图/时序图/参数指标图)
 
@@ -768,6 +1246,35 @@ How Day16 can directly use this:
 1. 检索命中率：对 `answerable=true` 样本，Top-K 命中任一 `expected_source_keywords` 记为命中。
 2. 引用正确率：回答引用格式合法且引用片段命中关键词，记为正确。
 3. 信息不足正确率：对 `answerable=false` 样本，模型输出“当前信息不足”且不编造细节，记为正确拒答。
+
+### Day15 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[设计评测目标] --> B[定义 case 字段]
+	B --> C[填写 question 与 reference_answer]
+	C --> D[标记 answerable]
+	D --> E[补充 keypoints 与 source keywords]
+	E --> F[按 category/difficulty 检查分布]
+	F --> G[写入 day15_evalset_qa.json]
+```
+
+### Day15 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant D as 评测设计者
+	participant S as Evalset结构
+	participant V as 质量检查
+	participant FS as 文件系统
+
+	D->>S: 定义 case schema
+	D->>S: 添加问题、参考答案与关键点
+	D->>S: 添加可回答标记与来源关键词
+	D->>V: 检查字段完整性与样本分布
+	V-->>D: 评测集校验结果
+	D->>FS: 写入 inputs/day15_evalset_qa.json
+```
 
 ## 23) Day 16 - 实现离线评测脚本（命中率、引用正确率）
 
@@ -805,6 +1312,41 @@ Metrics:
 2. `citation_correct_rate`：可回答样本中，引用格式合规且引用 chunk 命中期望关键词。
 3. `insufficient_correct_rate`：不可回答样本中，是否正确输出“当前信息不足”。
 
+### Day16 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n读取语料与评测集] --> B[load_eval_cases\n加载 cases]
+	B --> C[chunk_text + 向量检索]
+	C --> D[choose_hits\n可选 rerank]
+	D --> E[生成答案与引用]
+	E --> F[hits_match_keywords + citation_chunks_match_keywords]
+	F --> G[compute_summary\n聚合命中/引用/拒答指标]
+	G --> H[write_summary_csv + write_report]
+```
+
+### Day16 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant E as Evalset
+	participant R as 检索与QA
+	participant V as 评测函数
+	participant O as 报告输出
+
+	M->>E: load_eval_cases()
+	E-->>M: cases
+	loop 每条 case
+		M->>R: 检索 top-k 并生成答案
+		R-->>M: hits + citations + answer
+		M->>V: 判断检索命中、引用正确、拒答正确
+		V-->>M: case metrics
+	end
+	M->>O: compute_summary() + write_report()
+	O-->>M: 汇总指标
+```
+
 ## 24) Day 17 - 加查询改写（Query Rewrite）并对比效果
 
 Day 17 goal: compare no-rewrite vs rewrite retrieval queries on the same offline eval set.
@@ -841,6 +1383,41 @@ Metrics:
 2. `citation_correct_rate`：引用正确率（格式合法 + 证据命中）。
 3. `insufficient_correct_rate`：不可回答样本正确拒答率。
 4. `rewrite_changed_rate`：改写后查询与原查询不同的比例。
+
+### Day17 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载评测集与检索参数] --> B[baseline query\n原始查询检索]
+	A --> C[rewrite_query\n模型改写查询]
+	C --> D[rewritten query\n改写后检索]
+	B --> E[choose_hits + QA 校验]
+	D --> F[choose_hits + QA 校验]
+	E --> G[compute_mode_summary\n汇总 baseline]
+	F --> H[compute_mode_summary\n汇总 rewrite]
+	G --> I[write_csv + write_report]
+	H --> I
+```
+
+### Day17 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant L as Query Rewrite模型
+	participant R as 检索与QA链路
+	participant O as 报告输出
+
+	loop 每条评测样本
+		M->>R: 使用原始 query 检索与问答
+		R-->>M: baseline result
+		M->>L: rewrite_query(question)
+		L-->>M: retrieval_query
+		M->>R: 使用改写 query 检索与问答
+		R-->>M: rewrite result
+	end
+	M->>O: compute_mode_summary() + write_report()
+```
 
 ## 25) Day 18 - 加多路召回（关键词 + 向量）并对比效果
 
@@ -881,6 +1458,51 @@ Metrics:
 2. `citation_correct_rate`：引用正确率（格式合法 + 证据命中）。
 3. `insufficient_correct_rate`：不可回答样本正确拒答率。
 4. `citation_format_valid_rate`：引用格式与可追溯合规率。
+
+### Day18 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n解析评测参数] --> B[load_eval_cases\n读取 Day15 评测集]
+	B --> C[chunk_text\n按 chunk_size+overlap 切块]
+	C --> D[build_keyword_stats\n构造词表与 IDF]
+	D --> E[retrieve_keyword_hits\n关键词召回候选]
+	E --> F[vector retrieval\nembedding + FAISS 检索]
+	F --> G[fuse_candidates_rrf\n混合路由融合]
+	G --> H[choose_hits\n可选 rerank 与 top-k 截断]
+	H --> I[evaluate_case\n逐样本执行评分]
+	I --> J[compute_mode_summary\n聚合 vector_only / hybrid]
+	J --> K[write_csv + write_report\n导出报告与明细]
+```
+
+### Day18 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant U as 用户/脚本
+	participant Main as main()
+	participant Eval as load_eval_cases()
+	participant KW as retrieve_keyword_hits()
+	participant Vec as FAISS 向量检索
+	participant Fuse as fuse_candidates_rrf()
+	participant EvalCase as evaluate_case()
+	participant R as write_csv()/write_report()
+
+	U->>Main: 运行 day18 对比脚本
+	Main->>Eval: 读取问答评测集
+	Eval-->>Main: cases
+	Main->>Main: chunk_text() 切 chunk
+	Main->>KW: 关键词召回（IDF 权重）
+	KW-->>Main: keyword_hits
+	Main->>Vec: 向量召回 top-N
+	Vec-->>Main: vector_hits
+	Main->>Fuse: RRF 融合两个召回结果
+	Fuse-->>Main: hybrid_candidates
+	Main->>EvalCase: 对每条样本评分并记录命中/引用/拒答
+	EvalCase-->>Main: per-case metrics
+	Main->>R: 输出 CSV + Markdown + JSONL
+	R-->>U: 完整对比报告
+```
 
 ## 26) Day 19 - 加缓存与去重并对比效果
 
@@ -927,6 +1549,47 @@ Metrics:
 5. `cache_hit_rate`：缓存查找命中率（仅 cache_dedup 模式有效）。
 6. `avg_dedup_removed`：单样本平均去重移除数量（仅 cache_dedup 模式有效）。
 7. `avg_elapsed_ms`：单样本平均端到端耗时（检索 + QA + 校验）。
+
+### Day19 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载语料与评测集] --> B[build_keyword_stats + 向量索引]
+	B --> C[baseline retrieval\n关键词 + 向量召回]
+	B --> D[cache_dedup retrieval\n缓存召回]
+	D --> E[fuse_candidates_with_cache\n融合缓存结果]
+	E --> F[dedup_candidates\n候选去重]
+	C --> G[choose_hits + evaluate_case]
+	F --> G
+	G --> H[compute_mode_summary\n比较两种模式]
+	H --> I[write_csv + write_report]
+```
+
+### Day19 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant K as Keyword/Vector检索
+	participant C as Cache
+	participant D as dedup_candidates()
+	participant Q as evaluate_case()
+	participant O as 输出文件
+
+	M->>K: 构建两路召回候选
+	K-->>M: vector_hits + keyword_hits
+	alt cache_dedup 模式
+		M->>C: normalize_query_key() + lookup()
+		C-->>M: 缓存命中或未命中
+		M->>D: fuse_candidates_with_cache() + 去重
+		D-->>M: dedup hits
+	else baseline 模式
+		M->>M: fuse_candidates_rrf()
+	end
+	M->>Q: 生成答案并评测
+	Q-->>M: metrics
+	M->>O: 汇总并写出 CSV/Markdown/JSONL
+```
 
 ## 27) Day 20 - 延迟与成本统计（每次请求 token 与耗时）
 
@@ -978,6 +1641,41 @@ Notes:
 1. QA token 取自接口 `usage`，是精确值。
 2. embedding 接口当前不返回 usage，因此 Day20 仅统计 embedding 请求次数与耗时，不统计 embedding token。
 
+### Day20 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载评测集与计时参数] --> B[检索初始化\n关键词统计 + 向量索引]
+	B --> C[evaluate_case\n执行检索、去重、QA 与重试]
+	C --> D[记录 stage latency 与 token usage]
+	D --> E[percentile\n计算 avg/p50/p95]
+	E --> F[summarize_metric\n聚合 QA、embedding、端到端指标]
+	F --> G[write_csv + write_report\n输出成本延迟报告]
+```
+
+### Day20 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant M as main()
+	participant R as 检索链路
+	participant L as Chat模型
+	participant T as 计时与usage记录
+	participant O as 报告输出
+
+	loop 每条评测样本
+		M->>T: 记录请求开始时间
+		M->>R: 执行关键词/向量召回与缓存去重
+		R-->>M: hits + embedding latency
+		M->>L: 发起 QA 请求，可按策略重试
+		L-->>M: answer + token usage
+		M->>T: 记录 QA、端到端耗时与 tokens
+	end
+	M->>T: percentile() + summarize_metric()
+	T-->>M: avg/p50/p95 汇总
+	M->>O: write_csv() + write_report()
+```
+
 ## 28) Day 21 - RAG V2 发布（带指标面板/评测报告）
 
 Day 21 goal: generate a release-ready KPI panel and gate decision from Day18/Day19/Day20 results.
@@ -1013,6 +1711,42 @@ Release output:
 1. KPI panel: Day18/Day19/Day20 key metrics side-by-side.
 2. Gate checks: quality and cost/latency threshold checks.
 3. Release decision: `GO` / `NO-GO`.
+
+### Day21 业务流程图（Mermaid）
+
+```mermaid
+flowchart TD
+	A[main\n加载 Day18/19/20 CSV] --> B[row_by_mode\n提取 hybrid / cache_dedup / target]
+	B --> C[as_float / as_int\n归一化指标字段]
+	C --> D[gate_line\n生成门禁条件与比较结果]
+	D --> E[format_gate_mark\n判定 PASS/FAIL]
+	E --> F[write_report\n生成 KPI 面板与门禁表]
+	F --> G[write_summary_json\n输出发布摘要 JSON]
+	G --> H[最终决策 GO / NO-GO]
+```
+
+### Day21 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+	participant Main as main()
+	participant CSV as CSV 读取与归一化
+	participant Gate as gate_line()
+	participant Report as write_report()
+	participant JSON as write_summary_json()
+
+	Main->>CSV: read_csv_rows(day18/day19/day20)
+	CSV-->>Main: rows
+	Main->>CSV: row_by_mode(mode)
+	CSV-->>Main: target row per dataset
+	Main->>Gate: 构造各项门禁规则
+	Gate-->>Main: gate[] + passed flags
+	Main->>Report: 输出指标面板 + 阈值对照
+	Report-->>Main: Markdown report
+	Main->>JSON: 填充发布摘要
+	JSON-->>Main: summary.json
+	Main-->>Main: decision = GO or NO-GO
+```
 
 ## 29) Day 22 - 学习函数调用机制，定义 2-3 个工具
 
