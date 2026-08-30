@@ -1,0 +1,998 @@
+/* React 版独立维护设计令牌，便于和 Vue 实现逐项比较。 */
+:root {
+  --ink: #17201e;
+  --muted: #64706d;
+  --paper: #f7f9f7;
+  --surface: #ffffff;
+  --line: #dce3df;
+  --primary: #146b54;
+  --primary-strong: #0d513f;
+  --primary-soft: #e8f4ef;
+  --ai: #3857a5;
+  --ai-soft: #edf1ff;
+  --warning: #a55b09;
+  --warning-soft: #fff6df;
+  --danger: #a33c35;
+  --danger-soft: #fff0ed;
+  --font-display: 'Avenir Next', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SFMono-Regular', 'Cascadia Code', monospace;
+  color-scheme: light;
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 全局使用 border-box，动态内容不会撑破网格。 */
+* {
+  box-sizing: border-box;
+}
+
+/* 页面背景加入轻量网格，保持工作台秩序感。 */
+body {
+  margin: 0;
+  min-width: 320px;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(rgba(20, 107, 84, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 107, 84, 0.025) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* React 根节点始终覆盖完整动态视口。 */
+#root,
+.app-shell {
+  min-height: 100dvh;
+}
+
+/* 表单元素继承应用字体。 */
+button,
+textarea {
+  font: inherit;
+}
+
+/* 按钮默认显示可点击光标。 */
+button {
+  cursor: pointer;
+}
+
+/* 禁用按钮同时降低视觉权重。 */
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 标题和段落间距由具体组件控制。 */
+h1,
+h2,
+p {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+/* 应用由固定顶栏和剩余主体构成。 */
+.app-shell {
+  display: grid;
+  grid-template-rows: 64px 1fr;
+}
+
+/* 顶栏同时展示产品、模型版本和认证主体。 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, 520px) minmax(180px, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+}
+
+/* 品牌标志和名称横向排列。 */
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+/* 品牌方块使用固定尺寸。 */
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  background: var(--primary);
+  color: #ffffff;
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+/* 品牌两行文本分别占一行。 */
+.brand-block strong,
+.brand-block small {
+  display: block;
+  line-height: 1.2;
+}
+
+/* 产品名称使用紧凑展示字号。 */
+.brand-block strong {
+  font-family: var(--font-display);
+  font-size: 16px;
+}
+
+/* 框架标识使用次级层级。 */
+.brand-block small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 模型状态允许长版本名收缩。 */
+.model-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfb;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 模型图标使用独立 AI 色。 */
+.model-status svg {
+  flex: 0 0 auto;
+  color: var(--ai);
+}
+
+/* 长模型版本在顶栏显示省略号。 */
+.model-status code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 当前操作员信息靠右显示。 */
+.operator-block {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 主体由学科侧栏和可收缩工作区组成。 */
+.shell-body {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: calc(100dvh - 64px);
+}
+
+/* 学科导航使用白色工作面。 */
+.subject-sidebar {
+  padding: 26px 16px;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* 侧栏标题使用小字号和次级色。 */
+.sidebar-label {
+  margin-bottom: 10px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* 每个学科按钮保持相同高度。 */
+.subject-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+/* 普通学科 hover 使用中性底色。 */
+.subject-button:hover {
+  background: #f1f5f3;
+}
+
+/* 当前学科使用浅品牌状态。 */
+.subject-button.active {
+  border-color: #bad9cd;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+/* 学科文字允许正确收缩。 */
+.subject-button span {
+  display: block;
+  min-width: 0;
+}
+
+/* 学科名称单独一行。 */
+.subject-button strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+/* 学科内容说明使用次级色。 */
+.subject-button small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 分隔导航与流水线状态。 */
+.sidebar-divider {
+  margin: 24px 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* 流水线状态纵向排列。 */
+.pipeline-state {
+  display: grid;
+  gap: 9px;
+}
+
+/* 流水线状态项保持图文对齐。 */
+.pipeline-state > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 三个阶段分别使用主色、AI 色和人工警告色。 */
+.pipeline-state > span:nth-of-type(1) svg { color: var(--primary); }
+.pipeline-state > span:nth-of-type(2) svg { color: var(--ai); }
+.pipeline-state > span:nth-of-type(3) svg { color: var(--warning); }
+
+/* 工作区为固定提交栏保留底部空间。 */
+.workspace {
+  min-width: 0;
+  padding: 26px 30px 120px;
+}
+
+/* 工作区工具栏两端对齐。 */
+.workspace-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+/* 小标题使用品牌色。 */
+.eyebrow {
+  display: block;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* 页面标题保持运营工具尺度。 */
+.workspace-toolbar h1 {
+  margin-top: 4px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+/* 主次命令共享稳定几何尺寸。 */
+.primary-button,
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+/* 主按钮使用绿色实底。 */
+.primary-button {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+}
+
+/* 主按钮 hover 使用深绿色。 */
+.primary-button:hover:not(:disabled) {
+  border-color: var(--primary-strong);
+  background: var(--primary-strong);
+}
+
+/* 次按钮使用白底描边。 */
+.secondary-button {
+  border: 1px solid #cdd7d2;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* 次按钮 hover 使用浅中性底。 */
+.secondary-button:hover:not(:disabled) {
+  border-color: #9fc6b8;
+  background: #f1f5f3;
+}
+
+/* 键盘用户获得清晰焦点轮廓。 */
+button:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(20, 107, 84, 0.2);
+  outline-offset: 2px;
+}
+
+/* 错误与警告共享图文横条布局。 */
+.message-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 12px;
+  padding: 11px 13px;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 错误条使用红色体系。 */
+.error-message {
+  border-color: #efc2bc;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 降级警告使用琥珀体系。 */
+.warning-message {
+  border-color: #ead19c;
+  background: var(--warning-soft);
+  color: #76430b;
+}
+
+/* 加载、成功和空队列使用稳定高度。 */
+.loading-state,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 420px;
+  color: var(--muted);
+}
+
+/* 空状态标题返回主文字色。 */
+.empty-state h2 {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 20px;
+}
+
+/* 空状态主图标使用品牌色。 */
+.empty-state > svg {
+  color: var(--primary);
+}
+
+/* 任务元数据允许窄屏换行。 */
+.task-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding: 10px 13px;
+  border-block: 1px solid #d7dfdb;
+  background: #eef2f0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 元数据项保持图标基线一致。 */
+.task-meta-strip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 桌面端题目标签区与证据区并列。 */
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  align-items: start;
+  gap: 22px;
+}
+
+/* 主复核区域只使用单层工作面。 */
+.review-main {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+/* 题目详情区提供足够阅读留白。 */
+.question-section {
+  padding: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 章节标题和标签标题共享两端布局。 */
+.section-heading,
+.labels-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* 面板内部标题使用紧凑字号。 */
+.section-heading h2,
+.labels-heading h2,
+.evidence-heading h2 {
+  margin-top: 4px;
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+/* 来源名称过长时截断。 */
+.source-chip {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: #edf1ef;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 题干保留原始换行并允许长单词断行。 */
+.question-stem {
+  margin: 22px 0;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+}
+
+/* 参考答案使用强调带而非嵌套卡片。 */
+.answer-band {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 15px;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
+  line-height: 1.55;
+}
+
+/* 字段名使用统一次级层级。 */
+.answer-band span,
+.analysis-text > span,
+.evidence-answer span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* 答案内容允许长文本换行。 */
+.answer-band strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+/* 题目解析与答案字段左边缘对齐。 */
+.analysis-text {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 17px;
+}
+
+/* 解析正文使用次级文字色。 */
+.analysis-text p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* 标签标题区与列表之间使用分隔线。 */
+.labels-heading {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 选择统计使用紧凑横向布局。 */
+.selection-summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 统计数值使用等宽字体。 */
+.selection-summary strong {
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+
+/* 两组统计之间使用细竖线。 */
+.selection-summary i {
+  width: 1px;
+  height: 14px;
+  margin: 0 5px;
+  background: var(--line);
+}
+
+/* 标签列表只控制外部留白。 */
+.label-list {
+  padding: 8px 12px 14px;
+}
+
+/* 每个标签使用选择框、说明和置信度三列。 */
+.label-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 72px;
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+  min-height: 82px;
+  padding: 13px 10px;
+  border: 0;
+  border-bottom: 1px solid #e8ecea;
+  background: transparent;
+  text-align: left;
+  transition: background-color 150ms ease;
+}
+
+/* 最后一项不显示多余分隔线。 */
+.label-row:last-child {
+  border-bottom: 0;
+}
+
+/* hover 提供轻量行反馈。 */
+.label-row:hover {
+  background: #f7faf8;
+}
+
+/* 人工当前选中行使用浅绿色。 */
+.label-row.selected {
+  background: #f0f8f4;
+}
+
+/* 自定义选择框保持固定尺寸。 */
+.selection-box {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1.5px solid #aab6b1;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #ffffff;
+}
+
+/* 选中状态使用品牌底色。 */
+.label-row.selected .selection-box {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+/* 标签说明列允许在网格中收缩。 */
+.label-copy {
+  display: block;
+  min-width: 0;
+}
+
+/* 名称和状态标记可以换行。 */
+.label-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+/* 标签名称保持工作界面字号。 */
+.label-title-line > strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* AI 与风险标记共享紧凑形状。 */
+.ai-badge,
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* AI 建议使用靛蓝体系。 */
+.ai-badge {
+  background: var(--ai-soft);
+  color: var(--ai);
+}
+
+/* 重点复核使用琥珀体系。 */
+.risk-badge {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* 标签理由独占一行并支持长文本。 */
+.label-reason {
+  display: block;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+/* 各信号源分数可以换行。 */
+.source-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* 单个信号源使用中性浅底。 */
+.source-scores > span {
+  padding: 3px 5px;
+  border-radius: 3px;
+  background: #edf1ef;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+/* 分数使用等宽字体对齐。 */
+.source-scores b {
+  margin-left: 3px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+
+/* 置信度列固定宽度并右对齐。 */
+.confidence-block {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+/* 置信度文字使用等宽字体。 */
+.confidence-block strong {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* 原生进度条固定宽高。 */
+.confidence-block progress {
+  width: 64px;
+  height: 5px;
+  overflow: hidden;
+  appearance: none;
+  border: 0;
+  border-radius: 2px;
+}
+
+/* WebKit 进度槽和值。 */
+.confidence-block progress::-webkit-progress-bar { background: #dfe5e2; }
+.confidence-block progress::-webkit-progress-value { background: var(--primary); }
+/* Firefox 进度值。 */
+.confidence-block progress::-moz-progress-bar { background: var(--primary); }
+
+/* RAG 证据是独立工作区域。 */
+.evidence-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+/* 证据标题排列图标、名称和数量。 */
+.evidence-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* RAG 图标、标题和数量样式。 */
+.evidence-heading > svg { color: var(--ai); }
+.evidence-heading h2 { flex: 1; margin-top: 0; }
+.evidence-heading > span {
+  min-width: 25px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: #edf1ef;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+/* 证据列表只设置一层内边距。 */
+.evidence-list {
+  padding: 4px 15px 10px;
+}
+
+/* 相似题之间使用分隔线而非嵌套卡片。 */
+.evidence-item {
+  padding: 14px 1px;
+  border-bottom: 1px solid #e8ecea;
+}
+
+/* 最后一条证据取消分隔线。 */
+.evidence-item:last-child { border-bottom: 0; }
+
+/* 证据 ID 与分数两端对齐。 */
+.evidence-item header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* 长 evidence ID 使用省略号。 */
+.evidence-item code {
+  max-width: 210px;
+  overflow: hidden;
+  color: var(--ai);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* RRF 分数使用等宽品牌色。 */
+.evidence-item header strong {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* 相似题题干保持可读行高。 */
+.evidence-item > p {
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* 证据答案纵向排列。 */
+.evidence-answer {
+  display: grid;
+  gap: 3px;
+}
+
+/* 证据答案使用次级文字色。 */
+.evidence-answer strong {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 历史人工标签允许换行。 */
+.evidence-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+/* 证据标签使用浅品牌底。 */
+.evidence-tags span {
+  padding: 3px 5px;
+  border-radius: 3px;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  font-size: 9px;
+}
+
+/* 来源与许可证使用等宽小字。 */
+.evidence-item footer {
+  margin-top: 9px;
+  overflow-wrap: anywhere;
+  color: #87918e;
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+/* 无证据时显示稳定空状态。 */
+.evidence-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 48px 20px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 提交栏固定在工作区底部，提高连续补录效率。 */
+.submission-bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 220px;
+  z-index: 15;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 20px;
+  padding: 14px 30px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 -8px 24px rgba(24, 43, 36, 0.06);
+  backdrop-filter: blur(12px);
+}
+
+/* 备注字段纵向排列。 */
+.note-field {
+  display: grid;
+  gap: 6px;
+}
+
+/* 备注字段名使用次级小字。 */
+.note-field > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* textarea 是受控组件，但尺寸由 CSS 控制。 */
+.note-field textarea {
+  width: 100%;
+  min-height: 48px;
+  max-height: 112px;
+  padding: 10px 11px;
+  resize: vertical;
+  border: 1px solid #cdd7d2;
+  border-radius: 5px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 备注占位文本使用浅灰色。 */
+.note-field textarea::placeholder { color: #96a09d; }
+
+/* 底部两个命令横向排列。 */
+.submission-actions {
+  display: flex;
+  gap: 9px;
+}
+
+/* 加载图标使用平稳旋转。 */
+.spinning {
+  animation: spin 900ms linear infinite;
+}
+
+/* 定义完整一圈旋转。 */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 尊重系统减少动画偏好。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 中等屏幕缩窄侧栏并将证据移到主区下方。 */
+@media (max-width: 1080px) {
+  .shell-body { grid-template-columns: 184px minmax(0, 1fr); }
+  .submission-bar { left: 184px; }
+  .review-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 平板和手机改为顶部学科导航与单列内容。 */
+@media (max-width: 760px) {
+  .topbar {
+    grid-template-columns: 1fr auto;
+    padding: 0 16px;
+  }
+
+  .model-status { display: none; }
+  .shell-body { grid-template-columns: minmax(0, 1fr); }
+
+  .subject-sidebar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .subject-sidebar > .sidebar-label,
+  .sidebar-divider,
+  .pipeline-state { display: none; }
+
+  .subject-button {
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-height: 60px;
+    text-align: center;
+  }
+
+  .subject-button small { display: none; }
+  .workspace { padding: 18px 14px 190px; }
+  .workspace-toolbar h1 { font-size: 21px; }
+  .question-section { padding: 18px 15px; }
+  .question-stem { font-size: 16px; }
+
+  .answer-band,
+  .analysis-text {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .labels-heading { padding: 16px 15px; }
+  .label-list { padding-inline: 6px; }
+  .label-row { grid-template-columns: 22px minmax(0, 1fr); }
+
+  .confidence-block {
+    grid-column: 2;
+    grid-template-columns: auto 64px;
+    align-items: center;
+    justify-content: start;
+  }
+
+  .submission-bar {
+    left: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 11px 14px calc(11px + env(safe-area-inset-bottom));
+  }
+
+  .submission-actions > button { flex: 1; }
+}

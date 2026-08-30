@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- 声明页面使用简体中文，改善辅助功能和字体选择。 -->
+<html lang="zh-CN">
+  <head>
+    <!-- 使用 UTF-8 支持语文、数学和英语题目。 -->
+    <meta charset="UTF-8" />
+    <!-- 复用模板内置本地图标，避免外部资源请求。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- 适配移动视口和安全区域。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 浏览器主题色与工作台主操作一致。 -->
+    <meta name="theme-color" content="#146b54" />
+    <!-- 明确当前是 React 实现，便于和 Vue 页面并行比较。 -->
+    <title>题审台 · React 智能补录工作台</title>
+  </head>
+  <body>
+    <!-- React createRoot 会把组件树挂载到该节点。 -->
+    <div id="root"></div>
+    <!-- Vite 从 TSX 入口启动 React 应用。 -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

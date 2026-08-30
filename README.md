@@ -3761,3 +3761,27 @@ curl -s http://127.0.0.1:8070/metrics
 1. 先按目标岗位选择简历条目版本。
 2. 再用题库做 1-2 轮模拟面试。
 3. 最后用 90 秒自我介绍做开场定稿，形成稳定表达。
+
+## LangChain 专题分析（Xiaolinnote 13 篇）
+
+已按网页标题与功能整理为独立专题目录：
+
+- [`xiaolinnote_langchain_analysis/README.md`](xiaolinnote_langchain_analysis/README.md)：总索引、版本边界与推荐阅读顺序。
+- [`xiaolinnote_langchain_analysis/examples/langchain_capabilities_reference.py`](xiaolinnote_langchain_analysis/examples/langchain_capabilities_reference.py)：可离线运行的 LCEL、Tool、Agent Loop、Memory 和 Deep Research 参考实现。
+- [`tests/test_langchain_capabilities_reference.py`](tests/test_langchain_capabilities_reference.py)：对应离线测试。
+
+快速验证：
+
+```bash
+python xiaolinnote_langchain_analysis/examples/langchain_capabilities_reference.py
+python -m unittest tests.test_langchain_capabilities_reference -v
+```
+
+专题内容以网页所讲的 LangChain v1 为理论主线，同时明确标注当前项目 `langchain==0.2.17` 的可运行 API，避免把 `create_agent`、旧式 `AgentExecutor` 与 `langchain-classic` 混为同一版本。
+
+## 全栈实战：智能题目标注补录系统
+
+- [项目总览与运行方式](question_labeling_system/README.md)
+- 技术栈：FastAPI、MySQL、LangChain、LangGraph、Hybrid RAG、Vue 3、TypeScript。
+- 业务闭环：历史人工标签训练 -> 模型与 RAG 预标注 -> Vue 人工复核 -> 反馈评测与再训练。
+- 生产能力：JWT、任务租约、幂等提交、乐观锁、Alembic、Prometheus、Worker、容器部署和模型/RAG 回滚。

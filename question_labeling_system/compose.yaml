@@ -1,0 +1,177 @@
+# 该 Compose 文件用于完整集成验证；真正生产建议使用托管 MySQL/Qdrant 和 Kubernetes。
+services:
+  # MySQL 保存题目、任务租约、预测快照、人工标签和审计事实。
+  mysql:
+    # 使用 MySQL 8.4 长期支持版本。
+    image: mysql:8.4
+    # 发生进程故障时自动恢复。
+    restart: unless-stopped
+    # 从外部环境注入数据库凭据，禁止写死真实密码。
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-question_labeling}
+      MYSQL_USER: ${MYSQL_USER:-labeling}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+    # 设置 utf8mb4 并启用严格 SQL 模式。
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"]
+    # 将数据库文件保存在命名卷。
+    volumes:
+      - mysql_data:/var/lib/mysql
+    # 定期验证数据库可接受连接。
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # 设置容器日志轮转防止磁盘耗尽。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # Qdrant 保存人工确认题目的 Dense Embedding 索引。
+  qdrant:
+    # 固定已验证的 Qdrant 版本。
+    image: qdrant/qdrant:v1.12.5
+    # 发生进程故障时自动恢复。
+    restart: unless-stopped
+    # 将向量索引保存在命名卷。
+    volumes:
+      - qdrant_data:/qdrant/storage
+    # 验证 REST 服务已就绪。
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6333/readyz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # 设置容器日志轮转。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # migration 在 API 启动前原子应用数据库版本。
+  migration:
+    # 复用后端镜像和锁定依赖。
+    build:
+      context: ./backend
+    # 仅执行一次迁移命令。
+    command: ["alembic", "upgrade", "head"]
+    # 读取生产环境变量。
+    env_file:
+      - ${APP_ENV_FILE:-.env.production}
+    # 等待 MySQL 健康后再迁移。
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # 迁移失败时不自动无限重试。
+    restart: "no"
+
+  # API 提供认证、任务领取、预测读取和人工提交接口。
+  api:
+    # 使用后端 Dockerfile 构建。
+    build:
+      context: ./backend
+    # 发生进程故障时自动恢复。
+    restart: unless-stopped
+    # 读取生产环境变量和 Secret 文件路径。
+    env_file:
+      - ${APP_ENV_FILE:-.env.production}
+    # 只读挂载模型工件和 JWT 公钥。
+    volumes:
+      - ./artifacts/label_model.joblib:/app/artifacts/label_model.joblib:ro
+      - ./secrets/jwt_public.pem:/run/secrets/jwt_public.pem:ro
+    # 等待迁移成功和 Qdrant 健康。
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    # 验证 FastAPI 就绪状态。
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/readyz', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # 设置容器日志轮转。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # 独立 Worker 消费数据库预测任务并调用模型与 RAG。
+  worker:
+    # 复用后端镜像。
+    build:
+      context: ./backend
+    # 使用模块方式启动 Worker。
+    command: ["python", "-m", "app.worker", "--worker-id", "compose-worker-1"]
+    # 发生故障时自动恢复。
+    restart: unless-stopped
+    # 读取与 API 相同的生产配置。
+    env_file:
+      - ${APP_ENV_FILE:-.env.production}
+    # 只读挂载模型工件和 JWT 公钥。
+    volumes:
+      - ./artifacts/label_model.joblib:/app/artifacts/label_model.joblib:ro
+      - ./secrets/jwt_public.pem:/run/secrets/jwt_public.pem:ro
+    # 等待迁移、API 和向量库可用。
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    # 设置容器日志轮转。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # Vue 静态站点和 Nginx 反向代理是默认对外入口。
+  frontend:
+    # 使用多阶段前端镜像。
+    build:
+      context: ./frontend
+    # 发生故障时自动恢复。
+    restart: unless-stopped
+    # 仅在本机示例暴露 8080；线上由 TLS Ingress/LB 接入。
+    ports:
+      - "8080:8080"
+    # 等待 API 健康后接受流量。
+    depends_on:
+      api:
+        condition: service_healthy
+    # 设置容器日志轮转。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # React 19 是与 Vue 功能等价的可选前端，用 profile 显式启用。
+  frontend-react:
+    # 默认 compose up 不启动 React，避免和 Vue 重复占用资源。
+    profiles: ["react"]
+    # 使用 React 多阶段镜像。
+    build:
+      context: ./frontend-react
+    # 发生故障时自动恢复。
+    restart: unless-stopped
+    # React 示例映射到 8081，Vue 保持 8080。
+    ports:
+      - "8081:8080"
+    # 等待同一个 FastAPI 服务健康后接受流量。
+    depends_on:
+      api:
+        condition: service_healthy
+    # 设置容器日志轮转。
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+# 声明持久化数据库和向量索引卷。
+volumes:
+  # 保存 MySQL 数据。
+  mysql_data:
+  # 保存 Qdrant 数据。
+  qdrant_data:

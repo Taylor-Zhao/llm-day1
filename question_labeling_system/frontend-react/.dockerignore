@@ -1,0 +1,14 @@
+# 依赖由镜像内 npm ci 根据锁文件恢复。
+node_modules
+# 生产产物由镜像构建阶段重新生成。
+dist
+# Playwright 结果不属于运行镜像。
+test-results
+playwright-report
+# E2E 和学习文档不参与静态站点构建。
+e2e
+README.md
+# 忽略本地日志和编辑器元数据。
+*.log
+.DS_Store
+.vscode
