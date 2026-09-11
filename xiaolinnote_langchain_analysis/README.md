@@ -2,6 +2,10 @@
 
 本目录分析 Xiaolinnote 的 LangChain 总览与 12 篇专题文章。内容不是网页复述，而是按“理论模型 -> 当前仓库代码 -> 可运行补充实现 -> 面试追问”重新组织。
 
+## 总知识图谱
+
+- [LangChain 0-12 总知识图谱](LANGCHAIN_KNOWLEDGE_GRAPH.md)：用一张 Mermaid 图串联 Runnable/LCEL、Agent Loop、Tool Runtime、短期与长期记忆、LangGraph、LlamaIndex、LangChain4j、版本迁移和 Deep Research，并标出生产约束与反馈闭环。
+
 ## 版本边界
 
 网页以 **LangChain v1** 为主线；当前仓库依赖为：

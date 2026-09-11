@@ -6,6 +6,10 @@
 2. **项目事实**：只描述当前仓库中确实存在、可以运行或测试的实现。
 3. **补充实现**：对 OpenClaw 风格工作区、LightRAG 双层检索以及 Harness/Loop 控制面提供纯标准库教学代码，不冒充官方协议或产品。
 
+## 总知识图谱
+
+[AGENT_ENGINEERING_KNOWLEDGE_GRAPH.md](AGENT_ENGINEERING_KNOWLEDGE_GRAPH.md) 用一张 Mermaid 图串联七篇文章：Agent 的决策与工具协议、OpenClaw 工作区、RAG/GraphRAG/LightRAG 知识供给、Harness 六层控制和 Loop 的触发、验收、恢复与反馈。附四条复习路线、贯穿案例、易混概念及原文索引。
+
 ## 代码入口
 
 - [Day14 RAG V1](../run_day14_rag_v1_demo.py)：基础索引、检索与生成链路。

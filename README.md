@@ -2965,6 +2965,101 @@ QLoRA 则是在 LoRA 基础上进一步省资源：
 2. 对比 LoRA 和 QLoRA 的资源差异。
 3. 用粗略计算帮助建立“为什么全参数训练贵、LoRA/QLoRA 更轻量”的直觉。
 
+#### 2.1 为什么大模型训练通常使用 GPU
+
+大模型并不是只能由 GPU 训练，CPU 也能执行相同数学运算；区别主要在速度和吞吐。Transformer 训练的核心是大量矩阵乘法，例如：
+
+$$
+Y = XW
+$$
+
+矩阵中大量乘加运算彼此独立，可以同时执行。可以把两类处理器理解为：
+
+- CPU 像少量能力很强的高级工程师，擅长复杂控制流、分支和通用任务。
+- GPU 像成千上万个同时工作的计算单元，擅长反复执行结构相同的乘加运算。
+
+Transformer 中的 Attention、全连接层、前向传播和反向传播都包含大规模矩阵运算，因此非常适合 GPU 并行计算。现代 GPU 的 Tensor Core 还专门优化了 FP16、BF16、TF32 和部分低精度矩阵运算。
+
+CPU 在训练中仍然负责很多工作：
+
+1. 从磁盘读取训练数据。
+2. 执行 Tokenize 和数据预处理。
+3. 组织 Batch 并交给加速器。
+4. 调度训练循环、日志和指标。
+5. 保存 Checkpoint 和模型产物。
+
+所以真实训练不是“GPU 替代 CPU”，而是 CPU 负责准备和调度，GPU 负责最重的并行数值计算。TPU、NPU 等矩阵加速器也能训练大模型，并非只有 GPU 一种选择。
+
+#### 2.2 为什么 GPU 计算需要显存，而不只使用普通内存
+
+可以把普通内存和显存类比成两个存储位置：
+
+- RAM 是容量较大的中央仓库，主要由 CPU 直接访问。
+- VRAM 是放在 GPU 旁边的高速工作台，GPU 可以用很高的带宽直接读取。
+
+训练时，GPU 需要频繁访问：
+
+- 模型权重。
+- 当前 Micro-batch。
+- 前向传播产生的激活值。
+- 反向传播产生的梯度。
+- Adam 等优化器状态。
+- 临时计算缓冲区。
+
+如果这些数据只在普通内存中，每次计算都要经过总线搬到显存：
+
+```text
+磁盘 -> 普通内存 -> PCIe/互连 -> 显存 -> GPU 计算单元
+```
+
+GPU 本地显存带宽通常远高于 CPU 与 GPU 之间的 PCIe 传输带宽。若每一个计算步骤都等待远端内存搬运，GPU 的大量计算单元就会闲置。因此，当前计算反复需要的数据应尽量留在显存。
+
+完整数据集不必全部放入显存。常见训练数据流是：
+
+```mermaid
+flowchart LR
+	Disk[磁盘训练集] --> RAM[内存 DataLoader]
+	RAM --> Batch[Tokenize 与组成 Batch]
+	Batch --> VRAM[当前 Batch 传入显存]
+	VRAM --> Forward[GPU 前向传播]
+	Forward --> Activations[保存激活值]
+	Activations --> Backward[GPU 反向传播]
+	Backward --> Gradients[计算梯度]
+	Gradients --> Optimizer[更新参数]
+```
+
+内存保存数据集和预处理结果，显存只保存当前训练步骤所需的模型状态和 Batch。CPU Offload、ZeRO Offload 等技术可以把一部分权重或优化器状态放回普通内存，但会增加数据搬运，通常用训练速度换显存容量。
+
+#### 2.3 当前 Day31 代码怎样减少设备内存压力
+
+[run_day31_sft_lora_light.py](/Users/zhaoyonggng/work/llm-day1/run_day31_sft_lora_light.py) 使用了多种常见策略：
+
+| 代码配置 | 作用 | 需要注意 |
+|---|---|---|
+| `LoraConfig(...)` | 冻结基础模型，只训练少量低秩 Adapter 参数 | 基础模型权重仍需加载，但不再为全部参数保存梯度和 Adam 状态 |
+| `load_in_4bit=True` | QLoRA 以 4-bit 保存冻结的基础权重 | 当前脚本仅在 CUDA 可用时启用，否则回退普通 LoRA |
+| `per_device_train_batch_size` | 控制每次进入设备的样本数量 | 越小通常越省激活显存，但单步吞吐可能下降 |
+| `gradient_accumulation_steps` | 累积多个 Micro-batch 后再更新参数 | 模拟更大的有效 Batch，不会减少总计算量 |
+| `gradient_checkpointing=True` | 少保存部分前向激活，反向时重新计算 | 用额外计算时间换显存 |
+| `max_length` | 限制训练序列长度 | 序列越长，Attention 和激活通常越占内存 |
+| `device_map="auto"` | CUDA 可用时让 Transformers 自动放置模型 | 不等于自动解决所有显存不足问题 |
+
+当前脚本判断 CUDA 的关键逻辑是：
+
+```python
+if use_qlora and not torch.cuda.is_available():
+	print("[warn] --qlora requested but CUDA is unavailable. Fallback to LoRA.")
+	use_qlora = False
+```
+
+这意味着在没有 NVIDIA CUDA 的环境中，`--qlora` 不会真正执行 4-bit QLoRA，而会回退到普通 LoRA。CPU 仍然可以运行小模型训练，但速度一般明显慢于 GPU。
+
+需要特别区分：
+
+- “80GB+ 显存”描述的是训练过程可能达到的峰值占用，不是每次迭代都会永久新增 80GB。
+- 显存不足并不意味着普通内存也一定不足，两者是不同地址空间和带宽层级。
+- Apple Silicon 使用统一内存，CPU 和 GPU 共享物理内存池，但可用容量、内存带宽、算子支持和训练框架兼容性仍会限制训练规模。
+
 #### 3. 指令数据是什么
 
 指令数据就是“模型训练用的标准问答样本”。
@@ -3056,6 +3151,39 @@ Day32 不是继续训练，而是在做“考试”。
 3. `keyword_hit_ratio` 也有提升。
 
 那就说明这次微调不是“只跑通了流程”，而是真的让模型输出更符合目标场景。
+
+#### 8. 继续预训练、SFT、对齐：当前代码对应关系
+
+这三个阶段解决的问题不同，不能把“存在一个 LoRA 脚本”理解成三层训练都已经完成：
+
+| 阶段 | 当前代码 | 当前状态 | 实际职责 |
+|---|---|---|---|
+| 继续预训练（CPT） | `xiaolinnote_llm_analysis/examples/llm_algorithms_reference.py` 中的 `causal_lm_cross_entropy()` | 仅算法参考 | 展示下一 Token 交叉熵；没有使用无标注领域语料继续训练基座模型的 Trainer 脚本。 |
+| Scaling Law 估算 | 同一文件的 `fit_power_law()` | 仅算法参考 | 对观测到的规模与损失拟合幂律；不是继续预训练，也不会训练任何模型参数。 |
+| SFT 数据构造 | [run_day30_build_instruction_dataset.py](run_day30_build_instruction_dataset.py) | 已可运行 | 生成后端工程 `instruction/input/output` 训练和固定评测 JSONL。 |
+| SFT 训练 | [run_day31_sft_lora_light.py](run_day31_sft_lora_light.py) | 已可运行 | 加载 `HuggingFaceTB/SmolLM2-135M-Instruct`，构造 Dataset，配置 `LoraConfig`，并由 `SFTTrainer` 训练 LoRA Adapter；CUDA 环境可尝试 QLoRA。 |
+| SFT 前后评测 | [run_day32_sft_before_after_eval.py](run_day32_sft_before_after_eval.py) | 已可运行 | 在固定集上对比基础模型和 LoRA Adapter 的结构遵循、关键词命中和综合质量。 |
+| 题审业务 SFT 数据 | [export_sft_dataset.py](question_labeling_system/backend/app/training/export_sft_dataset.py) | 已可运行 | 将人工最终标签导出为带 system/user/assistant 消息的 JSONL，并通过稳定哈希划分 train/eval。 |
+| DPO 偏好优化 | `xiaolinnote_llm_analysis/examples/llm_algorithms_reference.py` 中的 `dpo_loss()` | 仅算法参考 | 实现 DPO 损失公式的可读版本，尚未接入 `DPOTrainer`、偏好数据集或真实模型反向传播。 |
+| GRPO 对齐 | 同一文件的 `grpo_advantages()` | 仅算法参考 | 实现组内奖励标准化，尚未接入 `GRPOTrainer`、Reward、Rollout 或策略更新。 |
+| 对齐数据与发布门禁 | [repositories.py](question_labeling_system/backend/app/db/repositories.py)、[evaluate_feedback.py](question_labeling_system/backend/app/evaluation/evaluate_feedback.py) | 已可运行 | 保存模型建议相对人工最终标签的新增/移除差异，并用 F1、Exact Match、人工修改率决定候选版本能否发布。 |
+
+当前可执行闭环如下：
+
+```mermaid
+flowchart LR
+	D30[Day30 指令数据] --> D31[Day31 SFTTrainer 加 LoRA]
+	D31 --> Adapter[LoRA Adapter]
+	Adapter --> D32[Day32 固定集前后评测]
+	Review[题审台人工复核] --> Export[export_sft_dataset]
+	Export --> DomainSFT[未来领域 SFT]
+	Review --> Preference[未来 Chosen Rejected 偏好对]
+	Preference --> DPO[未来 DPO 或 GRPO 训练]
+```
+
+题审系统已经具备“人工反馈 -> SFT 数据导出 -> 离线评测与发布门禁”的业务基础，但尚未把导出的数据自动交给 Day31 训练脚本。两套数据格式也不同：Day30 使用 `instruction/input/output`，题审导出使用 Chat `messages` 格式；接入前应统一 Prompt/Chat Template、标签 JSON Schema、评测集和模型版本记录。
+
+`dpo_loss()` 与 `grpo_advantages()` 的性质由 [tests/test_llm_algorithms_reference.py](tests/test_llm_algorithms_reference.py) 验证，但它们属于教学级公式实现，不替代 TRL 等训练框架中的真实批处理、梯度、参考模型、奖励和分布式训练链路。
 
 ## 37) Day33 - 推理加速（量化、批处理、并发）
 
@@ -3766,6 +3894,7 @@ curl -s http://127.0.0.1:8070/metrics
 
 已按网页标题与功能整理为独立专题目录：
 
+- [`xiaolinnote_langchain_analysis/LANGCHAIN_KNOWLEDGE_GRAPH.md`](xiaolinnote_langchain_analysis/LANGCHAIN_KNOWLEDGE_GRAPH.md)：一张图串联 13 篇专题的核心概念、执行关系、框架选型、版本边界与生产闭环。
 - [`xiaolinnote_langchain_analysis/README.md`](xiaolinnote_langchain_analysis/README.md)：总索引、版本边界与推荐阅读顺序。
 - [`xiaolinnote_langchain_analysis/examples/langchain_capabilities_reference.py`](xiaolinnote_langchain_analysis/examples/langchain_capabilities_reference.py)：可离线运行的 LCEL、Tool、Agent Loop、Memory 和 Deep Research 参考实现。
 - [`tests/test_langchain_capabilities_reference.py`](tests/test_langchain_capabilities_reference.py)：对应离线测试。

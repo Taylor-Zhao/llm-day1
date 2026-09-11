@@ -6,6 +6,10 @@
 2. **项目事实**：只描述仓库中确实存在、可以定位的代码。
 3. **补充实现**：对框架内部机制或当前缺口提供可离线运行的教学实现，不冒充生产框架。
 
+## 总知识图谱
+
+- [大模型工程 1-22 总知识图谱](LLM_ENGINEERING_KNOWLEDGE_GRAPH.md)：将模型架构、训练对齐、推理优化、Prompt、可靠性、部署、评测和选型放到一张 Mermaid 图中，并标注跨主题关系与常见混淆点。
+
 ## 代码入口
 
 - [Day1 LLM CLI](../chat_cli.py)：OpenAI-compatible 请求、Temperature、Token Usage 和 JSONL 日志。
