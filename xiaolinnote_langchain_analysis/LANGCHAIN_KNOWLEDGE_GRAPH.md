@@ -8,6 +8,7 @@
 - 实线表示主要调用流、数据流或执行流。
 - 虚线表示依赖、影响、约束、复用或迁移关系。
 - 网页主要采用 LangChain v1 语境；当前仓库采用 LangChain 0.2.x，图中会显式标出版本边界。
+- 同一个节点的出边按出边顺序使用不同颜色，便于区分它连接到的不同概念。
 
 ## 总图
 
@@ -290,6 +291,12 @@ flowchart TB
     WRITEPOLICY -.-> FEEDBACK
     FEEDBACK -.-> ABOUNDARY
     FEEDBACK -.-> BRIEF
+
+    %% Same-source outgoing edges use ordinal colors.
+    linkStyle 0,4,5,6,7,11,12,13,14,15,17,20,21,22,25,26,27,28,29,30,31,32,33,34,35,36,38,39,40,41,42,43,44,45,47,48,50,52,53,54,56,57,59,64,65,66,67,68,69,70,71,73,75,76,77,78,79,80,81,83,85,87,88,89,90,91,92,93,98,100,102,108,111,114,115,117,118,119,121,122,125 stroke:#2563eb,stroke-width:2px;
+    linkStyle 1,8,16,18,23,37,46,51,55,60,72,74,82,84,86,94,95,96,97,99,103,104,107,109,110,113,120,123,124,126 stroke:#0f766e,stroke-width:2px;
+    linkStyle 2,9,19,24,49,58,61,101,105,112 stroke:#16a34a,stroke-width:2px;
+    linkStyle 3,10,62,63,106,116 stroke:#ca8a04,stroke-width:2px;
 
     classDef entry fill:#fff4bf,stroke:#8b7500,color:#302900,stroke-width:2px;
     classDef selection fill:#eaf3ff,stroke:#34699a,color:#13293d;

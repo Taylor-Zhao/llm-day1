@@ -8,6 +8,7 @@
 - 实线表示主要数据流、训练流或调用流。
 - 虚线表示影响、约束、优化或反馈关系。
 - 同一概念可能跨越多个阶段，例如 Tokenizer、量化、KV Cache 和评测。
+- 同一个节点的出边按出边顺序使用不同颜色，便于区分它连接到的不同概念。
 
 ## 总图
 
@@ -198,6 +199,12 @@ flowchart TB
     E22D -.->|"构造 Chosen / Rejected"| T11A
     E22D -.->|"修订 Prompt"| P16B
     E22D -.->|"重新评估需求类型"| T08C
+
+    %% Same-source outgoing edges use ordinal colors.
+    linkStyle 0,1,2,3,4,6,8,9,10,11,12,13,14,15,16,17,21,22,26,27,29,30,31,32,33,34,35,36,37,38,39,40,42,43,44,46,47,48,49,50,51,52,53,54,55,57,58,59,60,61,63,64,65,67,71,73,77,79,82,84,85,87,88 stroke:#2563eb,stroke-width:2px;
+    linkStyle 5,18,19,23,28,41,45,56,62,66,68,69,72,74,75,78,80,81,83,86,89 stroke:#0f766e,stroke-width:2px;
+    linkStyle 7,20,24,70,76,90 stroke:#16a34a,stroke-width:2px;
+    linkStyle 25,91 stroke:#ca8a04,stroke-width:2px;
 
     classDef input fill:#fff6d9,stroke:#8a6d1d,color:#2d2715;
     classDef foundation fill:#eaf3ff,stroke:#34699a,color:#13293d;

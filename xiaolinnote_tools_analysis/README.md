@@ -35,6 +35,7 @@
 | 14 | SSE 与 WebSocket | [文字流式通信选型](14_sse_vs_websocket_ai_streaming.md) |
 | 15 | WebRTC 与 WebSocket | [实时语音传输](15_webrtc_vs_websocket_realtime_voice.md) |
 | 16 | LLM Gateway | [统一路由与治理](16_llm_gateway_routing_governance.md) |
+| 17 | 工具与协议总知识图谱 | [16 篇工具/协议总图](TOOLS_16_KNOWLEDGE_GRAPH.md) |
 
 ```mermaid
 flowchart LR

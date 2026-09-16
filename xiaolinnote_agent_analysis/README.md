@@ -16,6 +16,16 @@
 
 - `5_react`：对应原网页 `5_react.html`。
 - `reasoning_action_observation_loop`：说明文档聚焦 ReAct 工具循环实现。
+| 8 | Agent 记忆机制 | [四层记忆与 Memory Service](8_memory_agent_memory_module_design.md) | Day22 messages、Day9 FAISS |
+| 9 | 长短期记忆存储 | [存储、粒度与使用时机](9_memory_storage_short_long_term_memory.md) | Day9 向量检索、Day12 切分实验 |
+| 10 | 什么是 Multi-Agent | [分工、隔离与协作模式](10_multiagent_multi_agent_collaboration_basics.md) | Day25 编排边界 |
+| 11 | Single/Multi-Agent 方案 | [架构选型与渐进演进](11_single_multi_agent_architecture_selection.md) | Day22、Day25-Day28 |
+| 12 | Agent 记忆压缩 | [四种压缩方法](12_memcompress_agent_memory_compression.md) | messages、`trim_text()` 边界 |
+| 13 | 为什么手写 Agent | [手写核心与框架周边](13_handcode_handwritten_agent_engineering.md) | Day22/Day25 手写、LangChain 折中 |
+| 14 | LLM 规划能力 | [CoT/ToT/GoT 与 Plan-and-Execute](14_planning_llm_planning_and_execution.md) | Pydantic Plan、Retry/Replan 边界 |
+| 15 | Agent 反思机制 | [生成、评估与改进](15_reflection_agent_self_reflection_loop.md) | Retry/Fallback 与 Reflection 边界 |
+| 16 | 多 Agent 协作切换 | [共享状态、路由与 Handoff](16_collab_multi_agent_collaboration_routing.md) | trace 审计与建议演进 |
+| 17 | Agent 总知识图谱 | [总知识图谱](AGENT_16_KNOWLEDGE_GRAPH.md) | 16 篇 Agent 面试题的独立总图 |
 
 ## 文档目录
 
@@ -54,25 +64,6 @@ flowchart TD
     subgraph Memory[记忆系统]
     H[8 四层记忆] --> I[9 长短期存储]
     I --> J[12 记忆压缩]
-    end
-
-    subgraph Architecture[架构演进]
-    K[10 Multi-Agent 基础] --> L[11 Single/Multi 选型]
-    L --> M[16 协作与动态切换]
-    end
-
-    subgraph Quality[实现与质量]
-    N[13 手写与框架边界] --> O[14 规划能力]
-    O --> P[15 反思机制]
-    end
-
-    G --> H
-    G --> K
-    G --> N
-    J --> M
-    P --> M
-```
-
 ## 项目代码入口
 
 - [Day9 本地向量检索](../run_day9_local_vector_search.py)

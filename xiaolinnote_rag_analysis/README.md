@@ -10,6 +10,10 @@
 
 > 边界说明：参考实现是独立教学层，尚未接入 Day8-Day21 主流程；项目没有部署 Milvus、Qdrant、HNSW、GraphRAG、RAGAs、Kafka 或生产级 Web Search。
 
+## 总知识图谱
+
+[RAG_20_KNOWLEDGE_GRAPH.md](RAG_20_KNOWLEDGE_GRAPH.md) 汇总本目录的 20 篇 RAG 文档：从数据解析、Chunking、Embedding 和向量索引，到在线查询、混合召回、重排、高级 RAG、图检索、幻觉治理、评测和动态更新。图中同一节点的出边按序号使用不同颜色，跨主题关系使用更粗连线。
+
 ## 文档索引
 
 | 编号 | 原网页主题 | 分析文档 |
