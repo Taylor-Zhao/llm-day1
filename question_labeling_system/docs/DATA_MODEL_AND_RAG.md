@@ -204,10 +204,9 @@ flowchart TD
     Text --> Embedding[OpenAIEmbeddings.embed_documents]
     Embedding --> Point[stable UUID + payload]
     Point --> Upsert[Qdrant upsert wait=true]
-    Upsert --> Alias[版本化 collection/alias 切换]
 ```
 
-稳定 UUID5 让重复索引同一道题执行 upsert，而不是产生重复 Point。
+稳定 UUID5 让重复索引同一道题执行 upsert，而不是产生重复 Point。`index_rag.py` 只创建/可选删除目标集合并执行 upsert，不负责版本化集合发布或 Qdrant alias 切换；alias 切换属于独立部署步骤。
 
 生产发布不建议直接 `--recreate` 当前在线集合。更稳妥的过程：
 
@@ -216,6 +215,8 @@ flowchart TD
 3. 运行 Recall@K 与引用正确率评测。
 4. 使用配置或 Qdrant alias 原子切换。
 5. 保留上一版本用于快速回滚。
+
+训练、反馈评测、SFT 导出和 RAG 索引的精确输入/输出及调用时序见[实现级流程图与时序图](IMPLEMENTATION_FLOWS.md)。
 
 ## 9. 外部数据治理
 

@@ -33,6 +33,8 @@ flowchart LR
 - 操作员身份来自 JWT Runtime，不作为 Prompt 参数交给模型。
 - 人工提交是最终业务决策，同时也是后续训练反馈。
 
+接口、Worker、MySQL、检索、模型调用及离线脚本的数据级流程图和时序图见[实现级流程图与时序图](IMPLEMENTATION_FLOWS.md)。
+
 ## 2. 组件架构
 
 ```mermaid
