@@ -261,6 +261,9 @@ flowchart LR
         SFTExample --> SFTSplit[SHA-256 external_id 固定切分]
         SFTSplit --> TrainJSONL[train JSONL<br/>OpenAI messages + metadata]
         SFTSplit --> EvalJSONL[eval JSONL<br/>同格式固定评测集]
+        TrainJSONL --> SFTTrainer[train_sft_lora.py<br/>chat template -> text -> TRL SFTTrainer]
+        EvalJSONL --> SFTTrainer
+        SFTTrainer --> Adapter[(LoRA adapter + tokenizer<br/>training_summary.json)]
     end
 ```
 
@@ -354,6 +357,9 @@ sequenceDiagram
     actor Operator as 评测/导出操作者
     participant EvalCLI as evaluate_feedback.py
     participant ExportCLI as export_sft_dataset.py
+    participant SFTCLI as train_sft_lora.py
+    participant Tokenizer as 模型 tokenizer / chat template
+    participant Trainer as TRL SFTTrainer + PEFT
     participant DB as MySQL: questions, human_annotations, label_suggestions
     participant Metric as 指标与门禁
     participant Files as JSON/JSONL 文件
@@ -377,10 +383,35 @@ sequenceDiagram
         ExportCLI->>ExportCLI: SHA-256(external_id) 稳定划分
         ExportCLI->>Files: 逐行写 sft_train.jsonl / sft_eval.jsonl<br/>每行含 messages + metadata
         ExportCLI-->>Operator: train/eval 样本计数 JSON
+        Operator->>SFTCLI: --train-file artifacts/sft_train.jsonl<br/>--eval-file artifacts/sft_eval.jsonl --model-id ...
+        SFTCLI->>Files: 读取 id/messages/metadata JSONL
+        Files-->>SFTCLI: train/eval 消息样本
+        SFTCLI->>Tokenizer: apply_chat_template(messages, tokenize=false)
+        Tokenizer-->>SFTCLI: 模型 chat template 格式的 text
+        SFTCLI->>Trainer: text Dataset + LoRA 配置 + train/eval
+        Trainer-->>SFTCLI: train/eval metrics
+        SFTCLI->>Files: 保存 adapter/、tokenizer/、training_summary.json
     end
 ```
 
-> `evaluate_feedback.py` 的预测集合来自 `label_suggestions.selected_by_default`，人工集合来自 `human_annotations.selected_tags`；它产出评测 JSON 和 GO/NO-GO，不直接训练或部署模型。`export_sft_dataset.py` 只从 MySQL 导出 JSONL，不调用 LLM，也不执行微调；后续训练由独立 SFT/LoRA 工具完成。
+> `evaluate_feedback.py` 的预测集合来自 `label_suggestions.selected_by_default`，人工集合来自 `human_annotations.selected_tags`；它产出评测 JSON 和 GO/NO-GO，不直接训练或部署模型。`export_sft_dataset.py` 只从 MySQL 导出 JSONL，不调用 LLM，也不执行微调；同项目的 `train_sft_lora.py` 直接读取其 `messages` 格式并负责 LoRA/QLoRA 训练。
+
+SFT 依赖与运行示例（从 `llm-day1` 根目录安装依赖；以下训练命令在后端目录执行）：
+
+```bash
+pip install -r requirements_day29_day31.txt
+cd question_labeling_system/backend
+PYTHONPATH=. python -m app.training.export_sft_dataset \
+    --train-output ../artifacts/sft_train.jsonl \
+    --eval-output ../artifacts/sft_eval.jsonl
+PYTHONPATH=. python -m app.training.train_sft_lora \
+    --train-file artifacts/sft_train.jsonl \
+    --eval-file artifacts/sft_eval.jsonl \
+    --model-id Qwen/Qwen2.5-0.5B-Instruct \
+    --output-dir artifacts/sft_lora
+```
+
+加 `--qlora` 可请求 4-bit QLoRA；需要 CUDA 和 `bitsandbytes`。无 CUDA 时脚本会警告并回退到 LoRA。训练需要适用于所选模型的 tokenizer chat template。
 
 ## 8. 脚本边界速查
 
@@ -393,3 +424,4 @@ sequenceDiagram
 | `index_rag.py` | MySQL 最新人工标注或输入 JSONL | Embedding API + Qdrant | Qdrant Dense points | 否，只读 MySQL；可写/删除 Qdrant 集合 |
 | `evaluate_feedback.py` | MySQL 预测建议与人工最终标签 | 无 | evaluation JSON + GO/NO-GO | 否，只读 MySQL |
 | `export_sft_dataset.py` | MySQL 最新人工最终标签 | 无 | train/eval JSONL | 否，只读 MySQL |
+| `train_sft_lora.py` | exporter 的 train/eval `messages` JSONL | Hugging Face base model + TRL/PEFT；可选 bitsandbytes | LoRA adapter、tokenizer、training summary | 否 |
