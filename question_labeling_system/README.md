@@ -336,6 +336,7 @@ Compose 更适合集成验证和单机部署；高可用生产建议迁移到 Ku
 
 - [系统架构、业务流程与方法级时序](docs/ARCHITECTURE.md)
 - [100 万数据、训练、RAG 与反馈闭环](docs/DATA_MODEL_AND_RAG.md)
+- [实现级流程图与端到端实战串联](docs/IMPLEMENTATION_FLOWS.md)
 - [Vue 3 对应用法学习指南](docs/VUE_LEARNING_GUIDE.md)
 - [React 19 对应用法学习指南](docs/REACT_LEARNING_GUIDE.md)
 - [Python 项目化学习指南](docs/PYTHON_LEARNING_GUIDE.md)

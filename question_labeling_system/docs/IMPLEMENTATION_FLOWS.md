@@ -151,6 +151,86 @@ sequenceDiagram
 ```
 
 ## 3. 领取任务和提交人工标签时序
+## 2.1 Worker 消费预测队列时序
+
+`app.worker` 是独立的后台进程，专门消费 `prediction_jobs`。它不提供 HTTP 接口；启动时读取 `Settings.from_env()`，并通过 `build_container()` 装配与 API 相同的数据库、历史模型、RAG 和 LLM。API 使用 `predict_now=false` 入队后，由 Worker 执行实际预测。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Ops as 运维/容器平台
+    participant Worker as app.worker
+    participant Settings as Settings + build_container
+    participant App as LabelingApplicationService
+    participant Repo as QuestionRepository
+    participant DB as MySQL: prediction_jobs, questions, prediction_runs, label_suggestions, audit_events
+    participant Graph as LangGraph workflow
+
+    Ops->>Worker: python -m app.worker --worker-id demo-worker
+    Worker->>Worker: 解析 lease-seconds=120、max-attempts=3、poll-seconds=2
+    Worker->>Settings: Settings.from_env() + build_container()
+    Settings-->>Worker: 与 API 同配置的 service/repository/model/RAG
+    loop 常驻消费循环
+        Worker->>App: process_next_prediction_job(worker_id, lease, max_attempts)
+        App->>Repo: claim_prediction_job(worker_id, lease, max_attempts)
+        Repo->>DB: SELECT prediction_jobs 中可运行且租约空闲/过期的任务<br/>FOR UPDATE SKIP LOCKED
+        alt 没有可运行任务
+            DB-->>Repo: none
+            Repo-->>App: None
+            App-->>Worker: consumed=false
+            alt --once
+                Worker-->>Ops: 退出（本轮没有任务）
+            else 持续运行
+                Worker->>Worker: sleep(poll-seconds)
+            end
+        else 领取到任务
+            Repo->>DB: UPDATE prediction_jobs: status=running、attempts+1、leased_by、leased_until
+            DB-->>Repo: StoredPredictionJob(question_id, attempts, lease)
+            Repo-->>App: StoredPredictionJob
+            App->>Repo: 读取 questions；检查最新 prediction_runs
+            Repo->>DB: SELECT questions + latest prediction_runs
+            DB-->>Repo: 题目与已有快照
+            App->>Graph: predict_task(force=true)
+            Note over App,Graph: force=true，确保本次队列任务执行新预测；规则、Sparse/Dense RAG、历史模型、LLM 和融合详见第 2 节
+            alt 预测成功
+                Graph-->>App: PredictionResult + model_version + warnings
+                App->>Repo: save_prediction(result, latency_ms)
+                Repo->>DB: 同一事务 INSERT prediction_runs、label_suggestions、audit_events<br/>UPDATE prediction_jobs.status=completed 并清租约
+                DB-->>Repo: prediction_id
+                Repo-->>App: prediction_id
+                App-->>Worker: consumed=true
+            else 模型链或保存前处理失败
+                Graph-->>App: exception
+                App->>Repo: fail_prediction_job(job_id, worker_id, error, max_attempts)
+                Repo->>DB: UPDATE prediction_jobs.last_error 并清租约；INSERT audit_events
+                alt attempts < max_attempts
+                    Repo->>DB: status=pending；available_at=now + min(300, 2^attempts)
+                else attempts 达到上限
+                    Repo->>DB: status=failed
+                end
+                App-->>Worker: consumed=true（失败已记录，Worker 继续循环）
+            end
+            opt --once
+                Worker-->>Ops: 处理一个任务后退出
+            end
+        end
+    end
+```
+
+持续运行的命令（API 和 Worker 必须使用相同 `DATABASE_URL` 与模型/RAG 配置）：
+
+```bash
+cd /Users/zhaoyonggng/work/llm-day1/question_labeling_system/backend
+PYTHONPATH=. ../../.venv/bin/python -m app.worker \
+  --worker-id demo-worker \
+  --lease-seconds 120 \
+  --max-attempts 3 \
+  --poll-seconds 2
+```
+
+调试时可加 `--once`，最多处理一个队列项后退出；若队列为空则立即退出。Worker 空闲时才 sleep；处理过一项（成功或失败）后会继续下一轮。预测异常不会让整个 Worker 进程退出：租约被释放，任务按退避重新排队，或在尝试次数耗尽后进入 `failed`。
+
+## 3. 领取任务和提交人工标签时序
 
 ```mermaid
 sequenceDiagram
@@ -425,3 +505,242 @@ PYTHONPATH=. python -m app.training.train_sft_lora \
 | `evaluate_feedback.py` | MySQL 预测建议与人工最终标签 | 无 | evaluation JSON + GO/NO-GO | 否，只读 MySQL |
 | `export_sft_dataset.py` | MySQL 最新人工最终标签 | 无 | train/eval JSONL | 否，只读 MySQL |
 | `train_sft_lora.py` | exporter 的 train/eval `messages` JSONL | Hugging Face base model + TRL/PEFT；可选 bitsandbytes | LoRA adapter、tokenizer、training summary | 否 |
+
+## 9. 实战串联：从样例题到人工反馈和微调
+
+本节用仓库自带的原创样例 `data/sample_labeled_questions.jsonl` 和一条新导入的春天成语题串起主要脚本与 API。样例文件中的第一条大致如下：
+
+```json
+{"external_id":"train-cn-001","subject":"chinese","stem":"请写出一个描写春天的成语：____。","reference_answer":"春暖花开，其他合理答案均可。","analysis":"开放表达","source":"project_synthetic_seed","license_name":"project-authored","selected_tags":["answer_not_unique","semantic_equivalence"]}
+```
+
+其中 `selected_tags` 是人工确认标签。历史分类器、RAG 索引和 SFT exporter 都能用它，但它们产生的产物不同：分类器产出 sklearn 工件；索引脚本产出 Qdrant points；SFT exporter 产出聊天消息 JSONL。
+
+### 9.1 训练历史标签分类器
+
+从仓库根目录进入后端目录，并用隔离的本地 SQLite 文件运行：
+
+```bash
+cd /Users/zhaoyonggng/work/llm-day1
+source .venv/bin/activate
+cd question_labeling_system/backend
+export DATABASE_URL="sqlite:////tmp/question-labeling-demo.db"
+
+PYTHONPATH=. ../../.venv/bin/python -m app.training.train_historical_model \
+    --input-jsonl ../data/sample_labeled_questions.jsonl \
+    --output ../artifacts/demo_label_model.joblib \
+    --epochs 2 \
+    --batch-size 64 \
+    --evaluation-percent 20
+```
+
+请使用一个尚不存在的演示数据库文件；如果该路径已存在且含有旧待办，请换一个新文件名。API 和后续评测/导出命令必须连接同一个数据库文件。
+
+输入是每行含 `external_id/subject/stem/reference_answer/selected_tags` 的规范训练 JSONL；这里直接读文件，不查询 MySQL。输出在 `question_labeling_system/artifacts/`：
+
+- `demo_label_model.joblib`：HashingVectorizer 和每个标签的 SGDClassifier。
+- `demo_label_model.joblib.manifest.json`：模型版本、参数、留出集指标和未知标签统计。
+- stdout JSON：`artifact`、`manifest`、`version` 和训练/评测摘要。
+
+仓库样例集较小，固定哈希后评测样本数可能很少；真实训练应使用足够多且经审核的人工标注数据。
+
+### 9.2 可选：把同一批题写入 Qdrant
+
+Qdrant 和 Embedding 服务必须先运行。以 OpenAI-compatible 本地 Embedding 服务为例，按实际地址设置环境变量：
+
+```bash
+export QDRANT_URL="http://127.0.0.1:6333"
+export OPENAI_BASE_URL="http://127.0.0.1:11434/v1"
+export OPENAI_EMBEDDING_MODEL="nomic-embed-text"
+export OPENAI_API_KEY="ollama"
+
+PYTHONPATH=. ../../.venv/bin/python -m app.training.index_rag \
+    --input-jsonl ../data/sample_labeled_questions.jsonl \
+    --qdrant-url "$QDRANT_URL" \
+    --collection demo_labeled_questions \
+    --base-url "$OPENAI_BASE_URL" \
+    --embedding-model "$OPENAI_EMBEDDING_MODEL" \
+    --api-key "$OPENAI_API_KEY"
+```
+
+输入仍是同一个 JSONL。输出写到 Qdrant collection `demo_labeled_questions`，终端返回类似 `{"collection":"demo_labeled_questions","indexed":8,"vector_size":768}`；点数和向量维度以实际文件、Embedding 模型为准。这里不改 SQLite/MySQL。
+
+> 本地 API 默认 `RAG_MODE=memory`，不会自动查询这个 Qdrant collection。线上 `RAG_MODE=hybrid` 才会同时走 MySQL FULLTEXT 和 Qdrant；该模式需要 MySQL（含 FULLTEXT ngram 索引）、Qdrant 和匹配的 Embedding 配置，不能仅把本地 SQLite 切到 hybrid。
+
+### 9.3 启动本地 API 并导入一条新题
+
+以下设置让 API 复用刚训练的历史分类器，同时保留默认内存 RAG 和禁用 LLM 的本地模式：
+
+若只想快速把仓库的 8 条原创样例写入本地库并生成预测，可在**另一个独立数据库文件**上运行 `seed_local.py`：
+
+```bash
+DATABASE_URL="sqlite:////tmp/question-labeling-seed.db" \
+    PYTHONPATH=. ../../.venv/bin/python -m app.training.seed_local
+```
+
+输出类似 `{"database_url":"sqlite:////tmp/question-labeling-seed.db","imported":8,"predicted":8}`。它会创建题目、预测快照、建议和审计记录，但不创建 `human_annotations`；因此该数据库不能直接用于后面的反馈评测和 SFT 导出。单独数据库也避免它的 8 条待办排在 API 演示题之前。
+
+```bash
+export HISTORICAL_MODEL_MODE=artifact
+export HISTORICAL_MODEL_PATH="$PWD/../artifacts/demo_label_model.joblib"
+export RAG_MODE=memory
+export LLM_MODE=disabled
+
+PYTHONPATH=. ../../.venv/bin/python -m uvicorn app.main:app \
+    --host 127.0.0.1 --port 8010
+```
+
+在另一个终端用 `POST /api/v1/questions` 导入一条新题。开发环境默认启用调试身份；下面的角色同时包含 `importer` 和 `labeler`：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8010/api/v1/questions \
+    -H 'Content-Type: application/json' \
+    -H 'X-Debug-User: demo-reviewer' \
+    -H 'X-Debug-Roles: importer,labeler' \
+    -d '{
+        "question": {
+            "external_id": "api-cn-spring-001",
+            "subject": "chinese",
+            "stem": "请写出一个描写春天的成语：____。",
+            "reference_answer": "春暖花开，其他合理答案均可。",
+            "analysis": "开放表达题",
+            "source": "manual-demo",
+            "source_uri": "",
+            "license_name": "project-authored"
+        },
+        "predict_now": true
+    }'
+```
+
+`predict_now` 默认为 `true`。接口先在 `questions`、`prediction_jobs`、`audit_events` 中创建数据，再同步执行预测，将快照和逐标签建议写入 `prediction_runs`、`label_suggestions`，并完成预测队列记录。HTTP 状态为 `201`。下面是响应节选，只展开一个建议和一条证据；实际 `suggestions` 包含该学科所有适用标签，ID 和分数由本次运行生成：
+
+```json
+{
+    "task": {
+        "id": 1,
+        "question": {"external_id": "api-cn-spring-001", "subject": "chinese", "stem": "请写出一个描写春天的成语：____。", "reference_answer": "春暖花开，其他合理答案均可。", "analysis": "开放表达题", "source": "manual-demo", "source_uri": "", "license_name": "project-authored"},
+        "status": "pending",
+        "version": 1,
+        "claimed_by": null,
+        "claimed_until": null
+    },
+    "prediction_id": "<本次预测 UUID>",
+    "prediction": {
+        "suggestions": [
+            {"code": "answer_not_unique", "name": "答案不唯一", "confidence": 0.8791, "selected_by_default": true, "high_risk": true, "reason": "...", "source_scores": {"historical_model": 0.83, "rule": 0.96, "rag": 0.9167}, "evidence_ids": ["seed-cn-1"]}
+        ],
+        "evidence": [
+            {"evidence_id": "seed-cn-1", "question_id": "seed-cn-1", "subject": "chinese", "stem": "请写出一个描写春天的成语：____。", "reference_answer": "春暖花开；其他合理答案也可。", "human_labels": ["answer_not_unique", "semantic_equivalence"], "score": 0.9167, "source": "project_synthetic_seed", "source_uri": "", "license_name": "project-authored"}
+        ],
+        "requires_human_review": true,
+        "model_version": "historical=...;reasoner=llm-disabled;ensemble=v1",
+        "warnings": ["LLM 推理降级：RuntimeError"]
+    }
+}
+```
+
+这是本地降级模式的示例：`warnings` 会说明 LLM 未启用；RAG 分数对应当前内存检索示例，历史模型分数 `0.83` 和最终分数用于展示结构，实际值以训练工件运行结果为准。生产部署应使用 JWT，不能使用 `X-Debug-*`。
+
+### 9.4 领取并提交人工最终标签
+
+先领取语文队列中的下一题。新建的隔离数据库只有上一步这条题，因此领取到的就是它；已有其他待办时，队列按创建时间取最早任务：
+
+```bash
+CLAIM=$(curl -sS 'http://127.0.0.1:8010/api/v1/tasks/next?subject=chinese' \
+    -H 'X-Debug-User: demo-reviewer' \
+    -H 'X-Debug-Roles: importer,labeler')
+printf '%s\n' "$CLAIM" | jq '{task: .task, prediction_id: .prediction_id, suggestions: .prediction.suggestions}'
+
+QUESTION_ID=$(printf '%s' "$CLAIM" | jq -r '.task.id')
+PREDICTION_ID=$(printf '%s' "$CLAIM" | jq -r '.prediction_id')
+TASK_VERSION=$(printf '%s' "$CLAIM" | jq -r '.task.version')
+```
+
+`GET /api/v1/tasks/next` 将 `questions.status` 改为 `in_review`、增加 `version` 并设置操作员租约。操作员核对建议后，提交最终标签：
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8010/api/v1/tasks/$QUESTION_ID/submit" \
+    -H 'Content-Type: application/json' \
+    -H 'X-Debug-User: demo-reviewer' \
+    -H 'X-Debug-Roles: importer,labeler' \
+    -d "{\
+        \"prediction_id\": \"$PREDICTION_ID\",\
+        \"selected_tags\": [\"answer_not_unique\", \"semantic_equivalence\"],\
+        \"note\": \"人工核验：可接受多个合理成语\",\
+        \"idempotency_key\": \"demo-spring-submit-001\",\
+        \"expected_version\": $TASK_VERSION\
+    }"
+```
+
+成功返回 `201`，结构为：
+
+```json
+{
+    "annotation_id": 1,
+    "question_id": 1,
+    "selected_tags": ["answer_not_unique", "semantic_equivalence"],
+    "added_tags": ["semantic_equivalence"],
+    "removed_tags": [],
+    "operator_id": "demo-reviewer",
+    "created_at": "<UTC 时间>"
+}
+```
+
+这里的 `added_tags`/`removed_tags` 是相对该次预测默认勾选项计算的，所以上例的差异数组只是示意。事务写入 `human_annotations`，同时更新 `questions.status/latest_annotation_id/version` 并写入 `audit_events`。重复使用同一幂等键会返回原标注，不会重复创建。
+
+### 9.5 反馈评测、SFT 导出和 LoRA 训练
+
+人工提交后，评测脚本读取 `human_annotations`、`questions` 和 `label_suggestions`，比较模型默认标签与人工最终标签：
+
+```bash
+export DATABASE_URL="sqlite:////tmp/question-labeling-demo.db"
+PYTHONPATH=. ../../.venv/bin/python -m app.evaluation.evaluate_feedback \
+    --database-url "$DATABASE_URL" \
+    --output ../artifacts/demo_feedback_report.json
+```
+
+输出 `demo_feedback_report.json` 和 stdout JSON，字段包括 micro/macro F1、exact match、人工修改率、逐标签/逐学科指标及 `GO`/`NO-GO`。小型演示数据通常达不到默认发布门槛，脚本仍会先写报告，然后以退出码 `2` 表示 `NO-GO`；不要为了演示而把它当作生产验收结果。
+
+导出人工最终标签为 SFT train/eval JSONL：
+
+```bash
+export DATABASE_URL="sqlite:////tmp/question-labeling-demo.db"
+PYTHONPATH=. ../../.venv/bin/python -m app.training.export_sft_dataset \
+    --database-url "$DATABASE_URL" \
+    --train-output ../artifacts/sft_train.jsonl \
+    --eval-output ../artifacts/sft_eval.jsonl \
+    --evaluation-percent 20
+```
+
+每行输出形如 `{"id":"api-cn-spring-001","messages":[{"role":"system","content":"..."},{"role":"user","content":"..."},{"role":"assistant","content":"{\\"labels\\":[...],\\"warnings\\":[]}"}],"metadata":{"subject":"chinese","source":"manual-demo","source_uri":"","license_name":"project-authored"}}`。训练和评测按 `id` 的稳定 SHA-256 桶划分。两个文件都必须至少有一条记录；单条人工标注通常会导致某个 split 为空并触发 `ValueError`，因此需要足够多的已完成题目，或调整留出比例。
+
+安装独立的 SFT 依赖后，直接把上述两个文件交给配套训练脚本：
+
+```bash
+# 在 llm-day1 仓库根目录安装已有的训练依赖清单。
+cd /Users/zhaoyonggng/work/llm-day1
+source .venv/bin/activate
+pip install -r requirements_day29_day31.txt
+cd question_labeling_system/backend
+
+PYTHONPATH=. ../../.venv/bin/python -m app.training.train_sft_lora \
+    --train-file artifacts/sft_train.jsonl \
+    --eval-file artifacts/sft_eval.jsonl \
+    --model-id Qwen/Qwen2.5-0.5B-Instruct \
+    --output-dir artifacts/demo_sft_lora \
+    --epochs 1
+```
+
+输出 `artifacts/demo_sft_lora/adapter/`、`tokenizer/` 和 `training_summary.json`。加 `--qlora` 会请求 4-bit QLoRA，需要兼容的 CUDA 环境和 `bitsandbytes`；否则使用 LoRA。adapter 是增量权重，不会自动替换线上 ChatModel；API 当前仍通过 `OPENAI_*` 配置调用在线 LLM。要在线使用该 adapter，还需额外实现并部署对应的模型加载/推理适配器。
+
+### 9.6 异步导入分支
+
+大批导入可用 `predict_now: false`：API 立即返回 `prediction_id: ""` 和 pending 提示，MySQL `prediction_jobs` 中保留待处理记录。另开终端、使用同一份 `DATABASE_URL` 和模型/RAG 环境启动 Worker：
+
+```bash
+cd /Users/zhaoyonggng/work/llm-day1/question_labeling_system/backend
+PYTHONPATH=. ../../.venv/bin/python -m app.worker \
+    --worker-id demo-worker --once
+```
+
+`--once` 最多处理一个任务；持续服务时去掉 `--once`。成功后 Worker 写入 `prediction_runs`/`label_suggestions` 并更新 `prediction_jobs`；随后调用 `GET /api/v1/tasks/{question_id}` 可读取完整预测。API 和 Worker 必须连接同一个数据库并使用一致的模型、Embedding、Qdrant 配置。
