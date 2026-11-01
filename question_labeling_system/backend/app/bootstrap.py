@@ -4,7 +4,7 @@ from __future__ import annotations  # 延迟类型解析以兼容 Python 3.9。
 
 from dataclasses import dataclass  # 使用不可变容器聚合应用依赖。
 
-from app.adapters.historical_model import BootstrapHistoricalModel, SklearnHistoricalLabelModel  # 导入监督模型适配器。
+from app.adapters.historical_model import BootstrapHistoricalModel, RunnableHistoricalLabelModel, SklearnHistoricalLabelModel  # 导入监督模型适配器及 Runnable 包装。
 from app.adapters.llm_reasoner import DisabledLabelReasoner, LangChainLabelReasoner  # 导入 LLM 推理适配器。
 from app.adapters.rag import InMemoryEvidenceRetriever, MySqlFullTextSearchBackend, QdrantDenseSearchBackend, ReciprocalRankFusionRetriever  # 导入本地与生产 RAG。
 from app.core.config import Settings  # 导入已验证环境配置。
@@ -30,7 +30,8 @@ def build_container(settings: Settings) -> AppContainer:  # 根据环境装配�
         Base.metadata.create_all(engine)  # 生产环境必须使用 Alembic 迁移而非 create_all。
     session_factory = build_session_factory(engine)  # 创建仓储 Session 工厂。
     repository = QuestionRepository(session_factory)  # 创建事务仓储。
-    historical_model = SklearnHistoricalLabelModel(settings.historical_model_path) if settings.historical_model_mode == "artifact" else BootstrapHistoricalModel()  # 按配置选择训练工件或冷启动模型。
+    base_historical_model = SklearnHistoricalLabelModel(settings.historical_model_path) if settings.historical_model_mode == "artifact" else BootstrapHistoricalModel()  # 按配置选择训练工件或冷启动模型。
+    historical_model = RunnableHistoricalLabelModel(base_historical_model)  # 统一通过 LangChain Runnable 执行历史模型分数计算。
     if settings.rag_mode == "hybrid":  # 生产模式组合 MySQL Sparse 与 Qdrant Dense。
         from langchain_openai import OpenAIEmbeddings  # 延迟导入只在混合模式需要的向量模型。
 

@@ -744,3 +744,191 @@ PYTHONPATH=. ../../.venv/bin/python -m app.worker \
 ```
 
 `--once` 最多处理一个任务；持续服务时去掉 `--once`。成功后 Worker 写入 `prediction_runs`/`label_suggestions` 并更新 `prediction_jobs`；随后调用 `GET /api/v1/tasks/{question_id}` 可读取完整预测。API 和 Worker 必须连接同一个数据库并使用一致的模型、Embedding、Qdrant 配置。
+
+## 10. 全流程字段血缘与字段含义
+
+下面把训练样本、在线题目、检索证据、预测、人工反馈和两种离线评测/训练产物连起来。箭头表示字段被复制、转换或作为下游计算输入，不表示同名字段一定具有相同含义。
+
+```mermaid
+flowchart TD
+    Raw[历史训练 JSONL 或 MySQL<br/>external_id / subject / stem / answer / selected_tags]
+    Raw --> HistTrain[train_historical_model.py<br/>question text + selected_tags]
+    HistTrain --> HistArtifact[Joblib + manifest<br/>vectorizer / classifiers / metrics]
+    HistArtifact --> HistScore[historical_scores<br/>每个 tag 的 predict_proba]
+
+    NewQuestion[POST /api/v1/questions<br/>QuestionInput + predict_now] --> QuestionDB[(questions<br/>题目 / status / version / claim lease)]
+    NewQuestion --> JobDB[(prediction_jobs<br/>pending / attempts / lease)]
+    QuestionDB --> Retrieval[题目 subject + stem + answer]
+    Retrieval --> Sparse[MySQL FULLTEXT<br/>questions JOIN latest human_annotations]
+    Retrieval --> Dense[Qdrant Dense search<br/>subject filter + embedding]
+    Sparse --> Evidence[RRF -> RetrievedEvidence<br/>score / human_labels / source / license]
+    Dense --> Evidence
+    Evidence --> LLMInput[LLM prompt evidence_json]
+    Evidence --> RagScore[RAG label scores]
+    HistScore --> Fusion[ensemble weighted scores]
+    RagScore --> Fusion
+    LLMInput --> Fusion
+    Fusion --> Suggest[LabelSuggestion<br/>confidence / selected_by_default / evidence_ids]
+    Suggest --> PredictionDB[(prediction_runs<br/>result_json / version / latency)]
+    Suggest --> SuggestDB[(label_suggestions<br/>tag_code / confidence / default / source_scores)]
+
+    Claim[GET /api/v1/tasks/next<br/>subject filter] --> QuestionDB
+    Claim --> Lease[questions.status / claimed_by / claimed_until / version]
+    Suggest --> Review[人工核对]
+    Review --> Submit["POST /tasks/{id}/submit<br/>selected_tags / expected_version / idempotency_key"]
+    Submit --> AnnotationDB[(human_annotations<br/>selected / added / removed / model_version)]
+    Submit --> QuestionDB
+    AnnotationDB --> FeedbackEval[evaluate_feedback.py]
+    SuggestDB --> FeedbackEval
+    FeedbackEval --> EvalReport[evaluation_report.json<br/>F1 / exact match / change rate / gates]
+    AnnotationDB --> SFTExport[export_sft_dataset.py]
+    SFTExport --> SFTFiles[train/eval JSONL<br/>id / messages / metadata]
+    SFTFiles --> SFTTrain[train_sft_lora.py<br/>tokenizer template + TRL / PEFT]
+    SFTTrain --> Adapter[LoRA adapter + training_summary.json]
+```
+
+### 10.1 题目与任务生命周期字段
+
+| 字段 | 出现位置/用途 | 值变化怎么理解 |
+| --- | --- | --- |
+| `external_id` | 导入、训练 JSONL；上游题目稳定业务 ID | 用于导入幂等和稳定哈希切分；它是标识符，不是质量分数，值大小没有好坏含义 |
+| `subject` | `QuestionInput`、MySQL、RAG 查询 | `chinese`/`math`/`english`；控制标签集合和检索过滤，不存在大小方向 |
+| `stem`、`reference_answer`、`analysis` | `QuestionInput`；分类器文本、Sparse/Dense 查询和 Prompt 输入 | 是内容，不是指标。答案/解析变动会改变分类特征和检索结果 |
+| `source`、`source_uri`、`license_name` | 题目和证据的溯源/授权元数据 | 用于追溯与治理；字段非空或某个数值大小不代表模型质量更高 |
+| `predict_now` | `POST /api/v1/questions` 请求，默认 `true` | `true` 同步执行预测；`false` 留给 `prediction_jobs`/Worker 异步消费。它是路由开关，不是置信度 |
+| `task.id` / `question_id` | API 路径和表外键 | 数据库 ID，仅用于定位题目；值大小没有业务优劣 |
+| `status` | `questions.status` | 常见流转为 `pending -> in_review -> completed`；表示工作状态，不代表模型预测质量 |
+| `version` / `expected_version` | 领取响应、提交请求 | 领取/提交时递增；提交必须匹配读取到的版本。值更大只表示状态版本更新，不表示标签更准确 |
+| `claimed_by`、`claimed_until` | `questions` 任务租约 | 记录领取人和租约截止时间；过期后可重新领取。时间更晚不代表质量更好 |
+| `prediction_jobs.status` | Worker 数据库队列 | `pending -> running -> completed`，超过重试上限则 `failed`；`attempts` 增加表示重试次数增加，不代表预测变好 |
+| `prediction_id` | 一次 `prediction_runs` 快照的 ID；提交时必须带回 | 用于绑定“人工核对的是哪一次模型结果”；是 UUID，不看大小 |
+| `idempotency_key` | 人工提交请求 | 同一 key 重试会返回同一 annotation，避免重复写入；它不是结果特征 |
+| `operator_id`、`request_id` | 人员审计和请求追踪 | 用于追责/排障，不进入预测特征，也不应作为 Prompt 标签信号 |
+
+### 10.2 RAG 查询字段与证据字段
+
+| 字段/参数 | 用途 | 升高/降低或取值变化的含义 |
+| --- | --- | --- |
+| 查询 `subject` | Dense 侧 Qdrant payload 精确过滤；Sparse 侧限定同学科已完成题目 | 改学科会改变候选空间，不是分数变化；当前代码不跨学科召回 |
+| 查询文本 `stem + reference_answer` | MySQL FULLTEXT 和 Qdrant `embed_query()` 的查询内容 | 文本内容变化会改变召回结果；不是单调的“越长越好” |
+| `RAG_LIMIT` | 最终证据条数上限，默认 `6`；RRF 候选池为 `max(limit*3, 20)` | 增大可提高召回覆盖，但也会增加噪声、Prompt 长度和时延；不保证准确率上升 |
+| `score` | `RetrievedEvidence.score`，memory 模式是 Jaccard 相似度，hybrid 模式是归一化 RRF 排名分 | 越高表示在当前检索算法下越相似/排名越靠前；不等于标签正确概率或授权可信度 |
+| `human_labels` | 证据原题经人工确认的标签 | 是可追溯标签证据；不代表当前题一定应使用相同标签 |
+| `evidence_id`、`question_id` | 证据引用和回溯原题 | 标识符，无大小方向 |
+| `source`、`source_uri`、`license_name` | 表示证据来源、URI 和授权 | 用于审查来源和使用权限，不是相关性分数 |
+| RRF `sparse_weight` / `dense_weight` | 默认 `0.45` / `0.55`，控制两路排名贡献 | 提高某一路权重会提高该路排名对最终排序的影响，不代表召回质量必然提升 |
+| RRF `k` | 默认 `60`，平滑高低名次的差异 | 增大时名次差带来的分数差通常更小；它是融合超参数，不是质量指标 |
+
+### 10.3 预测建议字段
+
+| 字段 | 含义 | 值的方向/解读 |
+| --- | --- | --- |
+| `suggestions[].code` / `name` | 标签稳定编码及展示名称 | 类别字段，不是分数 |
+| `source_scores.rule` | 规则命中强度 | 越高表示当前规则的匹配分更高，不是统计校准概率 |
+| `source_scores.historical_model` | sklearn 对该标签的 `predict_proba()` 输出 | 越高表示分类器更倾向该标签；未做概率校准时不能直接解释为“有 x% 真实正确率” |
+| `source_scores.rag` | 相似人工题带来的标签分数，按证据分数和排名衰减计算 | 越高表示当前 RAG 信号更支持该标签，不是独立模型准确率 |
+| `source_scores.llm` | LLM 对标签给出的 `ReasonedLabel.confidence` | 越高表示 LLM 自报置信度更高；不是统计保证的正确概率 |
+| `confidence` | ensemble 对可用信号按权重归一化后的最终分数 | 越高越容易默认勾选；它是融合分数，不应当直接当作校准概率 |
+| `selected_by_default` | `confidence >= SELECTION_THRESHOLD`，默认阈值 `0.58` | `true` 表示页面预选；阈值调高会减少默认选择，通常提高精确率倾向但可能增加漏标，必须评测确认 |
+| `high_risk` | taxonomy 标记的风险属性 | `true` 意味着应重点人工核验，不表示模型分数低 |
+| `reason` | 面向补录人员的理由；LLM 不可用时使用固定回退文案 | 文字说明，不适合按长短评质量 |
+| `evidence_ids` | 支持此标签的 RAG/LLM 证据引用 | 数量多不等于质量高；应检查证据相关性与标签一致性 |
+| `model_version` | 历史分类器、Reasoner 和 ensemble 版本组合 | 用于追踪/切片评测；版本字符串不同不直接代表模型更优 |
+| `warnings` | RAG/LLM 降级、证据问题等信息 | 出现 warning 表示某组件降级或提示不确定性；数量减少不一定意味着真实质量提升，也需看监控覆盖 |
+
+### 10.4 补录申领与提交字段
+
+| 字段 | 阶段 | 含义与方向 |
+| --- | --- | --- |
+| `subject` 查询参数 | `GET /api/v1/tasks/next` | 可选学科队列过滤；不传表示不按学科筛选 |
+| `claimed_by` / `claimed_until` | 申领响应、`questions` | 当前领取人和租约到期时间；租约到期可被重新领取 |
+| `expected_version` | 提交请求 | 必须等于当前 `questions.version`；不匹配表示页面陈旧，返回冲突，而不是强行覆盖 |
+| `selected_tags` | 提交请求和 `human_annotations` | 人工最终标签集合；这是训练/评测的主要真值字段，允许空数组表示确认无标签 |
+| `note` | 提交请求和 `human_annotations` | 人工备注，最多 2,000 字符；描述上下文，不作为当前模型特征 |
+| `added_tags` | 提交响应和 `human_annotations` | `selected_tags - 默认选中标签`；越多通常表示模型漏标更多，但也受题目复杂度和操作员习惯影响 |
+| `removed_tags` | 提交响应和 `human_annotations` | `默认选中标签 - selected_tags`；越多通常表示模型误报更多，同样要按样本量和人群切片分析 |
+| `annotation_id` | 提交响应 | 人工记录 ID，仅用于定位记录 |
+| `created_at` | 提交响应、数据库 | 人工确认时间；可用于时间漂移分析，不直接表示标签质量 |
+
+### 10.5 历史模型训练与评测字段
+
+历史模型训练输入 JSONL 每行关键字段：
+
+| 字段 | 含义 | 变化影响 |
+| --- | --- | --- |
+| `external_id` | 稳定题目 ID | SHA-256 决定固定 train/eval 桶；改 ID 会改变切分，不是内容质量提升 |
+| `subject` / `stem` / `reference_answer` / `analysis` | 题目模型输入字段 | 内容改变会改变特征和预测；文本本身无大小方向 |
+| `selected_tags` | 人工标签编码数组 | 决定各标签 0/1 监督目标；缺标或错标会直接污染训练真值 |
+| `source` / `source_uri` / `license_name` | 数据治理元数据 | 保留来源、授权和追溯信息；不直接参与 `question_to_model_text()` 特征 |
+
+训练参数及方向：
+
+| 参数 | 默认/范围 | 增大或减小意味着什么 |
+| --- | --- | --- |
+| `epochs` | 默认 `2` | 更多轮次增加重复训练次数和耗时；可能收敛，也可能过拟合 |
+| `batch_size` | 默认 `2048` | 更大通常需要更多峰值内存、减少更新步数；不单调提升质量 |
+| `evaluation_percent` | CLI 默认 `10`，允许 `1..40` | 增大后固定留出样本增多、可用于训练的样本减少 |
+| `n_features` | 默认 `2**18` | 增大可减少 Hashing 冲突但增加分类器存储/计算成本；需实测 |
+| `positive_weight` | 默认 `3.0` | 增大正例权重通常让模型更愿意报正类，可能提高 recall、同时增加 false positives；需看逐标签指标 |
+| `threshold` | `evaluate_model()` 默认 `0.5` | 提高预测正类门槛通常减少正类预测、precision 倾向提高而 recall 倾向降低；不是 CLI 参数 |
+| `trained_examples_with_repeats` | 每轮训练的样本数累加 | 这是“处理次数”，约等于训练样本数 × epochs，不是唯一题目数；变大不代表数据集变大 |
+| `unknown_labels` | 未出现在当前 `TAG_DEFINITIONS` 的历史标签计数 | 增大表示标签字典/历史数据不一致或旧标签未治理，不是模型质量分 |
+
+训练留出集结果写入 manifest：
+
+| 指标字段 | 含义 | 越大/越小如何解读 |
+| --- | --- | --- |
+| `evaluation_examples` | 实际留出题数量 | 是样本量，不是质量分；样本太少时指标波动很大 |
+| `micro_precision` | 汇总所有标签的 TP/(TP+FP) | 越高表示被预测为正的标签中正确比例越高 |
+| `micro_recall` | 汇总所有标签的 TP/(TP+FN) | 越高表示人工真值标签被找回得越多 |
+| `micro_f1` | micro precision/recall 调和平均 | 越高通常越好，但需同时看 precision/recall 和各标签分布 |
+| `macro_f1` | 各标签 F1 的平均 | 越高通常越好，较能暴露稀有标签表现；当前零样本标签会以 0 计入 |
+| `exact_match_rate` | 整题预测标签集合与真值完全相同的比例 | 越高表示无需改标签的题比例越高；严格指标，常低于 micro F1 |
+
+### 10.6 反馈评测报告字段
+
+`evaluate_feedback.py` 的 `predicted_tags` 是人工提交时那次预测中 `selected_by_default=true` 的标签；`actual_tags` 是人工 `selected_tags`。它评的是**历史线上预测与人工最终选择的一致程度**，不是重新运行候选分类器。
+
+| 报告字段 | 含义 | 越大/越小如何解读 |
+| --- | --- | --- |
+| `examples` | 参与评测的人工记录数 | 样本越多通常估计越稳定；不代表模型更好 |
+| `versions` | 被评测的模型版本及样本数 | 用于按版本切片比较，不比较字符串大小 |
+| `micro.precision` / `recall` / `f1` | 跨标签汇总的分类指标 | 一般越高越好；precision 高但 recall 低可能表示漏标多 |
+| `macro_f1` | taxonomy 各标签 F1 的均值 | 一般越高越好；稀有标签低分会拉低它 |
+| `exact_match_rate` | 预测默认集合与人工最终集合完全相同的题比例 | 越高越好，表示整题建议无需修改的比例更高 |
+| `human_change_rate` | 至少新增或移除一个标签的题目比例 | 越低通常越好，表示更多题无需修改；需同时关注标签/学科和审核规范 |
+| `labels_added_by_humans` | 人工新增标签总数，等于 FN 总量 | 越高通常说明漏标更多，但也可能受标签规范变化影响 |
+| `labels_removed_by_humans` | 人工移除标签总数，等于 FP 总量 | 越高通常说明误报更多 |
+| `per_label` / `per_subject` | 按标签/学科拆分的 precision、recall、F1 和 TP/FP/FN | 用于定位退化类别；分数高低需结合每组样本量 |
+| `gates` | `micro_f1`、`exact_match_rate`、`human_change_rate` 是否达阈值 | 全部 true 才是 `GO`；门槛不是指标本身 |
+| `release_decision` | 总门禁 | `GO` 表示三个 gate 全过；否则 `NO-GO`，脚本退出码 `2` |
+
+### 10.7 SFT JSONL 与 LoRA 训练字段
+
+SFT 导出行字段：
+
+| 字段 | 含义 | 变化方向/注意事项 |
+| --- | --- | --- |
+| `id` | `external_id`，稳定样本 ID | 决定固定哈希切分；仅是 ID |
+| `messages[].role` | `system` / `user` / `assistant` | 消息角色，不是指标 |
+| `messages[].content` | system 任务约束、user 题目文本、assistant 目标 JSON | assistant 标签是监督目标；其中 `reason` 来自 taxonomy description，不是人工逐题撰写理由 |
+| `metadata.subject/source/source_uri/license_name` | 学科、来源、URI、授权元数据 | 保留来源治理信息；当前训练脚本主要把 `messages` 转成文本，metadata 不作为模型输入 |
+| `evaluation_percent` | SHA-256 固定留出的 eval 比例，范围 `1..40` | 增大后 eval 样本增多、train 样本减少；小数据可能导致某个 split 为空 |
+
+LoRA 训练参数/摘要字段：
+
+| 字段 | 含义 | 增大/降低如何解读 |
+| --- | --- | --- |
+| `model_id` | 基础 instruct/chat LLM | 不存在通用“越大越好”；更大模型通常需要更多显存、成本和时延 |
+| `max_seq_len` | 单样本最大 token 长度 | 增大可容纳更长题目/对话，但增加显存和计算；超长样本仍受模型/Trainer 截断策略影响 |
+| `epochs` / `max_steps` | 数据遍历轮数/最大优化步数 | 增加训练量和耗时，也可能过拟合；`max_steps=-1` 表示不额外限制步数 |
+| `batch_size` / `grad_accum` | 单设备批量/梯度累积步数 | 增大有效 batch 通常提升吞吐稳定性但消耗更多内存或训练时间；不保证效果提升 |
+| `learning_rate` | 优化步长 | 过高可能训练不稳定，过低可能收敛慢；不能简单按越大越好理解 |
+| `lora_r` / `lora_alpha` | Adapter 秩/缩放参数 | 增大 rank 通常提高可训练容量和资源消耗；alpha 改变 LoRA 更新缩放，不是质量指标 |
+| `lora_dropout` | Adapter dropout | 适当增加可能抑制过拟合，过大可能欠拟合 |
+| `method` | `lora` 或 `qlora` | 记录训练方式；QLoRA 4-bit 主要节省显存，不代表模型质量更高 |
+| `train_examples` / `eval_examples` | 实际加载的训练/评测样本数 | 样本更多有助于稳定性但不保证质量；要看数据质量与去重 |
+| `train_metrics` / `eval_metrics` | TRL Trainer 返回的训练/评测指标字典 | `train_loss`/`eval_loss` 越低代表 token 预测损失越低；eval loss 上升可能是过拟合，但它们不是标签 F1 或人工准确率 |
+| `adapter_dir` | LoRA adapter 目录 | 文件位置，不是指标；运行推理还需配套基础模型 |
+
+SFT loss 与历史分类器的 F1、`evaluate_feedback.py` 的发布门禁**不是同一指标**，不能直接比较数值大小。要判断业务标签质量，需把 SFT 模型接入推理、在独立固定集生成预测，再用任务级指标和人工修改率评估。

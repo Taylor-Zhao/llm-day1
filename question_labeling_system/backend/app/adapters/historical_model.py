@@ -5,7 +5,10 @@ from __future__ import annotations  # 延迟类型求值以兼容 Python 3.9。
 from pathlib import Path  # 处理模型工件路径。
 from typing import Any, Dict  # 为工件和分数字典提供类型。
 
+from langchain_core.runnables import RunnableLambda  # 将 sklearn/规则预测器暴露为 LangChain Runnable。
+
 from app.domain.models import QuestionInput  # 导入标准题目结构。
+from app.services.contracts import HistoricalLabelModel  # 复用工作流要求的历史模型协议。
 from app.services.labeling_workflow import rule_based_scores  # 本地冷启动复用可解释规则。
 
 
@@ -50,3 +53,19 @@ class SklearnHistoricalLabelModel:  # 加载字符 n-gram 增量多标签模型�
             probability = float(classifier.predict_proba(matrix)[0][1])  # 读取正类概率。
             scores[code] = probability  # 保存给融合图使用。
         return scores  # 返回完整多标签分数。
+
+
+class RunnableHistoricalLabelModel:  # 将任意历史标签模型包装为 LangChain Runnable。
+    def __init__(self, model: HistoricalLabelModel) -> None:  # 保留底层模型协议并创建可组合 Runnable。
+        self._model = model  # 保存 sklearn 工件或 bootstrap 规则模型。
+        self.runnable = RunnableLambda(self._invoke_model)  # 输入 QuestionInput，输出标签分数字典。
+
+    @property  # 继续向工作流暴露底层模型版本。
+    def version(self) -> str:  # 返回分类器或 bootstrap 版本。
+        return self._model.version  # 保持预测快照的版本追踪不变。
+
+    def _invoke_model(self, question: QuestionInput) -> Dict[str, float]:  # 适配 RunnableLambda 的同步函数签名。
+        return dict(self._model.predict_scores(question))  # 统一返回可序列化的 Python 字典。
+
+    def predict_scores(self, question: QuestionInput) -> Dict[str, float]:  # 保持 HistoricalLabelModel 调用接口兼容。
+        return self.runnable.invoke(question)  # 通过 LangChain Runnable 执行底层分类器。

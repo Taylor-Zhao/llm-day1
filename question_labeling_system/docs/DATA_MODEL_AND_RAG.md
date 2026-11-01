@@ -82,6 +82,21 @@ QuestionInput
 
 它的局限也很明确：复杂语义、长上下文和深层数学等价关系表达能力有限，所以系统再引入 RAG 和 LLM。
 
+### 实际使用的框架与工件
+
+历史标签模型是传统多标签分类器，不是 Transformer/LLM，也不使用 LangChain：
+
+| 部分 | 本项目实际实现 |
+| --- | --- |
+| 特征 | scikit-learn `HashingVectorizer(analyzer="char", ngram_range=(2, 5))`，输入为学科、题干、答案、解析拼成的文本 |
+| 分类器 | 每个标签一个 `SGDClassifier(loss="log_loss")`，通过 `partial_fit()` 分批训练；正例使用更高 `sample_weight` |
+| 数值与指标 | NumPy 构造稀疏特征对应的标签数组并汇总 TP/FP/FN、F1 和 exact match |
+| 数据读取 | SQLAlchemy 服务端游标分批读取 `questions JOIN human_annotations`，或逐行读取规范 JSONL |
+| 模型保存 | Joblib 保存包含 vectorizer、classifiers、标签编码、版本及 metadata 的 `.joblib`；同时写 `.manifest.json` |
+| 在线推理 | `SklearnHistoricalLabelModel` 用相同 `question_to_model_text()` 和 vectorizer 转换题目，再逐标签调用 `predict_proba()` |
+
+代码入口为 `backend/app/training/train_historical_model.py`；在线加载适配器为 `backend/app/adapters/historical_model.py`。后端依赖清单固定了 `scikit-learn==1.5.2`、`numpy==1.26.4`、`joblib==1.4.2`。输出工件只有在 `HISTORICAL_MODEL_MODE=artifact` 时才会被 API/Worker 加载；默认 `bootstrap` 使用规则冷启动模型。
+
 ### 类别不平衡
 
 “答案不唯一”等标签可能远少于普通标签。当前训练对正例设置更高 `sample_weight`。生产还应比较：
@@ -270,7 +285,22 @@ flowchart LR
 
 - 如果错误主要是关键词和模板特征，改数据与分类器更便宜。
 - 如果错误需要复杂语义和上下文，考虑 Transformer 分类模型。
-- 如果还要求稳定理由和证据引用，考虑 LoRA/QLoRA 微调结构化 LLM。
-- 如果知识变化快，优先改善 RAG，不要每次都重新训练参数。
+- 如果还要求生成结构化标签理由，可微调指令模型；知识变化快时，优先改进 RAG。
 
-本项目的 `export_sft_dataset.py` 将人工反馈导出为固定 train/eval 消息格式，可接 `llm-day1` Day29-Day32，但模型发布仍必须经过相同离线门禁和人工灰度。
+### 本项目的 SFT 技术栈
+
+SFT/LoRA 是与历史分类器不同的第二条模型路线：
+
+1. `export_sft_dataset.py` 从 `questions` 和最新 `human_annotations` 读取 `selected_tags`，生成稳定切分的 `sft_train.jsonl`、`sft_eval.jsonl`。每行是 `id + messages + metadata`，消息包含 system、user 和 assistant；assistant 的监督目标是由人工最终标签构造的 JSON。
+2. `train_sft_lora.py` 使用 Hugging Face `datasets.Dataset.from_generator()` 流式读取 JSONL，通过基础模型 tokenizer 的 `apply_chat_template()` 把 messages 转成模型训练文本。
+3. Hugging Face Transformers 加载因果语言模型和 tokenizer；TRL 的 `SFTConfig`/`SFTTrainer` 执行监督微调；PEFT 的 `LoraConfig` 将可训练参数限制在 LoRA adapter。
+4. 默认基础模型为 `Qwen/Qwen2.5-0.5B-Instruct`，可用 `--model-id` 更换支持 chat template 的 instruct 模型。加 `--qlora` 且 CUDA 可用时，使用 bitsandbytes 4-bit NF4 配置；否则走普通 LoRA。
+5. 输出 `adapter/`、`tokenizer/` 和 `training_summary.json`。Adapter 是基础模型的增量权重，不是完整模型。
+
+SFT 训练依赖与在线后端依赖分开：后端 `requirements.txt` 不安装 PyTorch/TRL；从仓库根目录安装 `requirements_day29_day31.txt` 才具备微调依赖。`bitsandbytes` 清单只在 Linux 上安装，QLoRA 通常需要 Linux + NVIDIA CUDA 环境。
+
+当前 API 在线 reasoner 由 `LLM_MODE=openai` 装配的 LangChain `ChatOpenAI` 调用；`train_sft_lora.py` 产出的 adapter **尚未接入该在线 ChatModel**。要在线使用 adapter，还需部署加载基础模型与 PEFT adapter 的推理服务，并把 `LabelReasoner` 接口接到该服务。历史分类器 joblib 工件则已有 `SklearnHistoricalLabelModel` 适配器，可由 `HISTORICAL_MODEL_MODE=artifact` 直接加载。
+
+微调结果与历史分类器不能互换：历史模型输出每标签概率，保存为 Joblib；SFT 输出生成式 LLM adapter，适合按消息格式生成 JSON。两条路线都要在固定评测集上验证，模型变更还需人工灰度。
+
+更多端到端命令、输入输出样例和 LoRA 训练步骤见[实现级流程图与实战串联](IMPLEMENTATION_FLOWS.md)；LangChain/Graph 的逐调用点说明见[LangChain 与 LangGraph 代码实践](LANGCHAIN_LANGGRAPH_GUIDE.md)。

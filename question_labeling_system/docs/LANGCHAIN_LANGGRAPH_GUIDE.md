@@ -79,7 +79,7 @@ flowchart LR
 1. `_normalize` 将题干、参考答案、解析拼成 `normalized_text`，同时初始化 `warnings`。当前后续节点仍主要从 `QuestionInput` 字段取值或由 Adapter 自己格式化文本；`normalized_text` 暂未作为统一模型输入被消费。
 2. `_rules` 调用本项目的 `rule_based_scores()`，例如多空题、数学计算、答案不唯一等规则。这是普通 Python，不是 LangChain Tool。
 3. `_retrieve` 调用注入的 `EvidenceRetriever`。本地是内存检索；Hybrid 模式由项目自己的 Sparse/Dense 检索和 RRF 实现。异常会转为空证据并写入 warning。
-4. `_historical_model` 调用 `HistoricalLabelModel.predict_scores()`，通常由 sklearn 工件提供各标签概率；模型错误不在该节点中吞掉，会向外传播。
+4. `_historical_model` 调用 `HistoricalLabelModel.predict_scores()`，通常由 sklearn 工件提供各标签概率；模型错误不在该节点中吞掉，会向外传播。`bootstrap.py` 会把 sklearn/bootstrap 实现统一包装为 `RunnableHistoricalLabelModel`；其内部用 `RunnableLambda` 将 `QuestionInput -> tag score dict` 暴露为 LangChain Runnable，再由既有 `predict_scores()` 接口调用 `runnable.invoke()`。
 5. `_reason` 调用 `LabelReasoner.reason()`。真实 LangChain Reasoner 返回结构化判断；LLM 超时、限流或解析错误会被捕获，返回空 `ReasonerOutput` 并追加 warning。
 6. `_ensemble` 是项目自己的 Python 逻辑：过滤当前学科外的标签，按可用信号计算加权分数、默认勾选、理由及 evidence IDs。
 
@@ -171,7 +171,7 @@ sequenceDiagram
 
 ## 6. 哪些地方不是 LangChain/LangGraph
 
-- `train_historical_model.py` 使用 scikit-learn，不使用 LangChain 或 LangGraph。
+- `train_historical_model.py` 的训练仍由 scikit-learn 完成（HashingVectorizer、SGDClassifier、Joblib）；在线历史模型适配层额外用 LangChain `RunnableLambda` 包装调用，但 Runnable 不负责训练、特征化或分类算法。
 - `train_sft_lora.py` 使用 Transformers、Datasets、TRL、PEFT，不使用 LangChain 或 LangGraph。
 - `evaluate_feedback.py` 用 SQLAlchemy/原生 SQL 计算指标，不是 LangChain Evaluation。
 - API 路由、鉴权、SQLAlchemy Repository、数据库事务、审计和重试都由 FastAPI/本项目代码完成。
@@ -185,6 +185,7 @@ sequenceDiagram
 | [`bootstrap.py`](../backend/app/bootstrap.py) | 按环境装配 Chat Reasoner、Embedding、Retriever 和 Graph |
 | [`labeling_workflow.py`](../backend/app/services/labeling_workflow.py) | `LabelingState`、StateGraph 节点/边、降级、ensemble、`graph.invoke()` |
 | [`llm_reasoner.py`](../backend/app/adapters/llm_reasoner.py) | ChatPromptTemplate、ChatOpenAI、结构化输出、LCEL `invoke()` |
+| [`historical_model.py`](../backend/app/adapters/historical_model.py) | sklearn/bootstrap 模型及 `RunnableHistoricalLabelModel` / `RunnableLambda` 运行时包装 |
 | [`rag.py`](../backend/app/adapters/rag.py) | Embedding 查询、MySQL FULLTEXT、Qdrant Search、RRF |
 | [`index_rag.py`](../backend/app/training/index_rag.py) | `embed_documents()` 和 Qdrant 离线 upsert |
 | [`application.py`](../backend/app/services/application.py) | API/Worker 调用工作流、记录耗时并持久化结果 |
