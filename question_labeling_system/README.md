@@ -336,6 +336,7 @@ Compose 更适合集成验证和单机部署；高可用生产建议迁移到 Ku
 
 - [系统架构、业务流程与方法级时序](docs/ARCHITECTURE.md)
 - [100 万数据、训练、RAG 与反馈闭环](docs/DATA_MODEL_AND_RAG.md)
+- [预训练、Transformer 与 K/V Cache 入门](docs/LLM_FOUNDATIONS_GUIDE.md)
 - [LangChain 与 LangGraph 代码实践](docs/LANGCHAIN_LANGGRAPH_GUIDE.md)
 - [实现级流程图与端到端实战串联](docs/IMPLEMENTATION_FLOWS.md)
 - [Vue 3 对应用法学习指南](docs/VUE_LEARNING_GUIDE.md)
